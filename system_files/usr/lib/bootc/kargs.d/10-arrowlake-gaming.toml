@@ -1,0 +1,13 @@
+kargs = [
+  "iommu=pt",
+  "preempt=full",
+  "intel_pstate=active",
+  "split_lock_mitigate=0",
+  "transparent_hugepage=madvise",
+  "pcie_aspm=off",
+  "nowatchdog",
+  "tsc=reliable",
+  "clocksource=tsc",
+  "threadirqs",
+  "usbcore.autosuspend=-1"
+]
