@@ -1,27 +1,50 @@
-#!/bin/bash
-
+#!/usr/bin/bash
 set -ouex pipefail
 
-# Copy the contents of system_files/ of the git repo to /
-cp -avf "/ctx/system_files"/. /
+# 1. Copy baked-in system configs (/usr/lib/sysctl.d, modprobe.d, kargs.d, etc.)
+cp -rv /ctx/system_files/* /
 
-### Install packages
+# 2. Remove default template placeholder file if present
+rm -f /usr/share/ublue-os/image-template-check
 
-# Packages can be installed from any enabled yum repo on the image.
-# RPMfusion repos are available by default in ublue main images
-# List of rpmfusion packages can be found here:
-# https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
+# 3. Install temporary compiler toolchain
+dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2
 
-# this installs a package from fedora repos
-dnf5 install -y tmux
+# 4. Arrow Lake-S (Core Ultra 7 265KF) compiler & linker optimization flags
+export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe"
+export CXXFLAGS="${CFLAGS}"
+export LDFLAGS="-Wl,-O3 -Wl,--as-needed -flto=auto"
 
-# Use a COPR Example:
-#
-# dnf5 -y copr enable ublue-os/staging
-# dnf5 -y install package
-# Disable COPRs so they don't end up enabled on the final image:
-# dnf5 -y copr disable ublue-os/staging
+# 5. Build Arrow Lake-S optimized jemalloc (libjemalloc.so.2)
+git clone --depth 1 --branch 5.3.0 https://github.com/jemalloc/jemalloc.git /tmp/jemalloc
+cd /tmp/jemalloc
+./autogen.sh --prefix=/usr --libdir=/usr/lib64 --disable-stats --enable-autogen
+make -j"$(nproc)"
+cp -f lib/libjemalloc.so.2 /usr/lib64/libjemalloc.so.2
+chmod 755 /usr/lib64/libjemalloc.so.2
+cd /
+rm -rf /tmp/jemalloc
 
-#### Example for enabling a System Unit File
+# 6. Build Arrow Lake-S optimized zlib-ng as drop-in replacement for system libz.so.1
+git clone --depth 1 --branch 2.2.4 https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng
+cmake -B /tmp/zlib-ng/build -S /tmp/zlib-ng -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
+  -DZLIB_COMPAT=ON \
+  -DZLIB_ENABLE_TESTS=OFF \
+  -DWITH_GTEST=OFF \
+  -DWITH_NATIVE_INSTRUCTIONS=OFF
+cmake --build /tmp/zlib-ng/build
+cp -f /tmp/zlib-ng/build/libz.so.1.* /usr/lib64/
+ln -sf /usr/lib64/$(basename /tmp/zlib-ng/build/libz.so.1.*) /usr/lib64/libz.so.1
+chmod 755 /usr/lib64/libz.so.1.*
+rm -rf /tmp/zlib-ng
 
-systemctl enable podman.socket
+# 7. Clean up build-only tools & refresh shared library cache
+dnf5 remove -y cmake ninja-build autoconf automake
+ldconfig
+
+# 8. Enable scx_lavd scheduler and mask boot-stalling wait-online service
+systemctl enable scx_loader.service
+systemctl mask NetworkManager-wait-online.service
