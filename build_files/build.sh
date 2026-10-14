@@ -18,7 +18,7 @@ export LDFLAGS="-Wl,-O3 -Wl,--as-needed -flto=auto"
 # 5. Build Arrow Lake-S optimized jemalloc (libjemalloc.so.2)
 git clone --depth 1 --branch 5.3.0 https://github.com/jemalloc/jemalloc.git /tmp/jemalloc
 cd /tmp/jemalloc
-./autogen.sh --prefix=/usr --libdir=/usr/lib64 --disable-stats --enable-autogen
+./autogen.sh --prefix=/usr --libdir=/usr/lib64 --disable-stats --disable-cxx --enable-autogen
 make -j"$(nproc)"
 cp -f lib/libjemalloc.so.2 /usr/lib64/libjemalloc.so.2
 chmod 755 /usr/lib64/libjemalloc.so.2
