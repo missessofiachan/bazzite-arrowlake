@@ -39,12 +39,13 @@ ln -sf "$(basename "${MIMALLOC_SO}")" /usr/lib64/libmimalloc.so.2
 ln -sf libmimalloc.so.2 /usr/lib64/libmimalloc.so
 rm -rf /tmp/mimalloc
 
-# 6. Build Arrow Lake-S zlib-ng 2.3.3 (matches Fedora 44 version)
+# 6. Build Arrow Lake-S zlib-ng 2.3.3 (matches Fedora 44 version; -mno-evex512 guard for GCC 16)
 git clone --depth 1 --branch 2.3.3 https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng
+sed -i 's/evex512//g' /tmp/zlib-ng/arch/x86/*.c /tmp/zlib-ng/CMakeLists.txt || true
 cmake -B /tmp/zlib-ng/build -S /tmp/zlib-ng -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DWITH_GTEST=OFF -DWITH_NATIVE_INSTRUCTIONS=OFF \
-  -DBUILD_SHARED_LIBS=ON
+  -DWITH_AVX512=OFF -DWITH_AVX512VNNI=OFF -DBUILD_SHARED_LIBS=ON
 cmake --build /tmp/zlib-ng/build
 ZLIB_SO=$(find /tmp/zlib-ng/build -maxdepth 1 -type f -name "libz.so.1.*")
 install -m 755 "${ZLIB_SO}" /usr/lib64/
@@ -62,8 +63,9 @@ install -m 755 "${ZSTD_SO}" /usr/lib64/
 ln -sf "$(basename "${ZSTD_SO}")" /usr/lib64/libzstd.so.1
 rm -rf /tmp/zstd
 
-# 8. Build Arrow Lake-S libdeflate (libdeflate.so.0)
-git clone --depth 1 --branch v1.23 https://github.com/ebiggers/libdeflate.git /tmp/libdeflate
+# 8. Build Arrow Lake-S libdeflate (strip obsolete GCC 14/15 evex512 attribute for GCC 16)
+git clone --depth 1 https://github.com/ebiggers/libdeflate.git /tmp/libdeflate
+sed -i 's/,evex512//g; s/"evex512"/""/g' /tmp/libdeflate/lib/x86/*.h
 cmake -B /tmp/libdeflate/build -S /tmp/libdeflate -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF
