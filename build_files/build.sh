@@ -22,6 +22,7 @@ cd /tmp/jemalloc
 ./autogen.sh --prefix=/usr --libdir=/usr/lib64 --disable-stats --disable-cxx --disable-static --enable-autogen
 make -j"$(nproc)" build_lib_shared
 install -m 755 lib/libjemalloc.so.2 /usr/lib64/libjemalloc.so.2
+ln -sf libjemalloc.so.2 /usr/lib64/libjemalloc.so
 cd / && rm -rf /tmp/jemalloc
 
 # 5. Build Arrow Lake-S mimalloc (libmimalloc.so.2)
@@ -68,6 +69,7 @@ cmake -B /tmp/libdeflate/build -S /tmp/libdeflate -G Ninja \
   -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF
 cmake --build /tmp/libdeflate/build
 install -m 755 /tmp/libdeflate/build/libdeflate.so.0 /usr/lib64/libdeflate.so.0
+ln -sf libdeflate.so.0 /usr/lib64/libdeflate.so
 rm -rf /tmp/libdeflate
 
 # 9. Build Arrow Lake-S lz4 (liblz4.so.1)

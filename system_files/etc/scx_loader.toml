@@ -2,4 +2,4 @@ default_sched = "scx_lavd"
 default_mode = "Gaming"
 
 [scheds.scx_lavd]
-gaming_mode = ["--performance", "--no-core-compaction"]
+gaming_mode = ["--performance"]
