@@ -2,4 +2,5 @@ default_sched = "scx_lavd"
 default_mode = "Gaming"
 
 [scheds.scx_lavd]
-gaming_mode = ["--performance"]
+gaming_mode = ["--performance", "--pinned-slice-us", "500"]
+lowlatency_mode = ["--performance", "--pinned-slice-us", "500"]

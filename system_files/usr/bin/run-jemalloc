@@ -1,0 +1,9 @@
+#!/usr/bin/bash
+if [ $# -eq 0 ]; then
+    echo "Usage: run-jemalloc <command> [args...]"
+    echo "Runs <command> with Arrow Lake-S optimized jemalloc (libjemalloc.so.2) preloaded."
+    echo "Example for Steam Launch Options: run-jemalloc %command%"
+    exit 1
+fi
+export LD_PRELOAD="/usr/lib64/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
+exec "$@"

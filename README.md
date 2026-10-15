@@ -26,6 +26,7 @@ Key system allocators, math routines, databases, security crypto, and compressio
 - **SLEEF 3.6.1:** Hardware-vectorized SIMD math library (`libsleef.so.3`) tuned for AVX2 + FMA for physics, shaders, and gaming audio pipelines.
 - **OpenSSL (`libcrypto.so.3` & `libssl.so.3`):** *(Temporarily on hold for system utility compatibility; see [TODO.md](TODO.md))* Stock OpenSSL with native dynamic CPU acceleration (VAES/SHA-NI) remains active.
 - **FastMem Primitives (`libfastmem.so`):** Native AVX2 256-bit vectorized `memcpy` & `memset` preload library tailored for Arrow Lake's high L2 cache bandwidth.
+- **Steam & Game Launch Wrappers:** Convenient drop-in CLI launchers (`run-jemalloc %command%`, `run-mimalloc %command%`, `run-fastmem %command%`) to instantly preload Arrow Lake-optimized allocators into Steam games.
 
 ### 3. Tuned Kernel Arguments (`10-arrowlake-gaming.toml`)
 Optimized for ultra-low latency, real-time audio/input responsiveness, and peak gaming frame rates:
@@ -37,9 +38,9 @@ Optimized for ultra-low latency, real-time audio/input responsiveness, and peak 
 - `usbcore.autosuspend=-1` to prevent latency spikes and disconnects on USB peripherals.
 
 ### 4. System & Subsystem Customizations
-- **Sched-ext (`scx_loader`):** Enabled for pluggable userspace/eBPF gaming schedulers (e.g. `scx_lavd`, `scx_bpfland`).
-- **NVIDIA GPU Tuning:** Low-latency environment variables and module options (`99-nvidia-gaming.conf`, `99-nvidia-custom.conf`).
-- **I/O & Sysctl:** NVMe/SSD gaming queue scheduler rules (`60-iosched-gaming.rules`) and virtual memory responsiveness tweaks (`99-bazzite-arrowlake.conf`).
+- **Sched-ext (`scx_loader`):** Enabled for pluggable userspace/eBPF gaming schedulers with low-latency 500µs pinned time slices (`scx_lavd`).
+- **NVIDIA GPU Tuning:** Low-latency environment variables, G-Sync / VRR flags on Wayland, and module options (`99-nvidia-gaming.conf`, `99-nvidia-custom.conf`).
+- **I/O & Sysctl:** NVMe/SSD gaming queue scheduler rules (`60-iosched-gaming.rules`), boosted inotify watchers for IDEs, and virtual memory responsiveness tweaks (`99-bazzite-arrowlake.conf`).
 - **Pro Audio:** PipeWire latency and quantum settings optimized for gaming audio (`99-gaming-audio.conf`).
 - **Network:** Disabled Wi-Fi power saving and masked blocking network wait services (`NetworkManager-wait-online.service`).
 - **Mullvad VPN:** Preinstalled official client, CLI, and systemd service (`mullvad-daemon.service`) for instant privacy protection and secure networking.
