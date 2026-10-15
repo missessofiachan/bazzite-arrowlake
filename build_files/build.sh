@@ -85,7 +85,15 @@ ldconfig
 
 # 10. Clear userspace LTO flags and swap in Custom Arrow Lake-S OGC Kernel
 unset CFLAGS CXXFLAGS LDFLAGS
-export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe"
+export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
+
+# Install oras and kernel module build tools
+dnf5 install -y oras akmods elfutils-libelf-devel
+
+# Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
+mkdir -p /tmp/ogc-rpms
+oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
+ls -la /tmp/ogc-rpms
 
 # Remove stock kernel packages & prebuilt kmod-nvidia tied to stock kernel
 dnf5 remove -y --no-autoremove \
@@ -96,7 +104,7 @@ dnf5 remove -y --no-autoremove \
     kernel-modules-extra \
     kmod-nvidia* || true
 
-# Install custom Arrow Lake-S OGC kernel RPMs (find handles flat or nested directories)
+# Install custom Arrow Lake-S OGC kernel RPMs
 RPMS=$(find /tmp/ogc-rpms -type f -name "kernel-*.rpm" ! -name "*debug*" ! -name "*src.rpm")
 dnf5 install -y ${RPMS}
 
@@ -116,7 +124,7 @@ chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
 # 11. Clean up build tools and caches
-dnf5 remove -y cmake ninja-build autoconf automake
+dnf5 remove -y cmake ninja-build autoconf automake oras
 dnf5 clean all
 ldconfig
 
