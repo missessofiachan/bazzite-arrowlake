@@ -80,10 +80,104 @@ install -m 755 "${LZ4_SO}" /usr/lib64/
 ln -sf "$(basename "${LZ4_SO}")" /usr/lib64/liblz4.so.1
 rm -rf /tmp/lz4
 
+# 10. Build Arrow Lake-S libjpeg-turbo (libjpeg.so.62 & libturbojpeg.so.0)
+git clone --depth 1 --branch 3.1.0 https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo
+cmake -B /tmp/libjpeg-turbo/build -S /tmp/libjpeg-turbo -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
+  -DENABLE_STATIC=OFF -DWITH_SIMD=ON -DWITH_JPEG8=ON
+cmake --build /tmp/libjpeg-turbo/build
+cmake --install /tmp/libjpeg-turbo/build
+rm -rf /tmp/libjpeg-turbo
+
+# 11. Build Arrow Lake-S SQLite3 (libsqlite3.so.0)
+git clone --depth 1 --branch version-3.48.0 https://github.com/sqlite/sqlite.git /tmp/sqlite
+cd /tmp/sqlite
+./configure --prefix=/usr --libdir=/usr/lib64 --disable-static \
+  CFLAGS="${CFLAGS} -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION=1"
+make -j"$(nproc)"
+install -m 755 .libs/libsqlite3.so.0.* /usr/lib64/
+ln -sf libsqlite3.so.0.* /usr/lib64/libsqlite3.so.0
+ln -sf libsqlite3.so.0 /usr/lib64/libsqlite3.so
+cd / && rm -rf /tmp/sqlite
+
+# 12. Build Arrow Lake-S SLEEF SIMD Math Library (libsleef.so.3)
+git clone --depth 1 --branch 3.6.1 https://github.com/shibatch/sleef.git /tmp/sleef
+cmake -B /tmp/sleef/build -S /tmp/sleef -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
+  -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DSLEEF_ENABLE_AVX512F=OFF
+cmake --build /tmp/sleef/build
+cmake --install /tmp/sleef/build
+rm -rf /tmp/sleef
+
+# 13. Build Arrow Lake-S OpenSSL 3.4 (libcrypto.so.3 & libssl.so.3 with VAES/SHA-NI)
+git clone --depth 1 --branch openssl-3.4.1 https://github.com/openssl/openssl.git /tmp/openssl
+cd /tmp/openssl
+./Configure linux-x86_64 --prefix=/usr --libdir=lib64 --openssldir=/etc/pki/tls \
+  shared enable-ec_nistp_64_gcc_128 no-static-engine no-tests \
+  "${CFLAGS}"
+make -j"$(nproc)" build_libs
+OPENSSL_CRYPTO_SO=$(find /tmp/openssl -maxdepth 1 -type f -name "libcrypto.so.3.*" | head -n 1)
+OPENSSL_SSL_SO=$(find /tmp/openssl -maxdepth 1 -type f -name "libssl.so.3.*" | head -n 1)
+install -m 755 "${OPENSSL_CRYPTO_SO}" /usr/lib64/
+install -m 755 "${OPENSSL_SSL_SO}" /usr/lib64/
+ln -sf "$(basename "${OPENSSL_CRYPTO_SO}")" /usr/lib64/libcrypto.so.3
+ln -sf "$(basename "${OPENSSL_SSL_SO}")" /usr/lib64/libssl.so.3
+cd / && rm -rf /tmp/openssl
+
+# 14. Build Arrow Lake-S AVX2 Fast Memory Primitives (libfastmem.so for memcpy & memset)
+mkdir -p /tmp/fastmem
+cat << 'EOF' > /tmp/fastmem/fastmem.c
+#define _GNU_SOURCE
+#include <stddef.h>
+#include <stdint.h>
+#include <immintrin.h>
+
+void *memcpy(void *dest, const void *src, size_t n) {
+    char *d = (char *)dest;
+    const char *s = (const char *)src;
+    if (n >= 64) {
+        size_t chunks = n / 32;
+        __m256i *d_vec = (__m256i *)d;
+        const __m256i *s_vec = (const __m256i *)s;
+        while (chunks--) {
+            _mm256_storeu_si256(d_vec++, _mm256_loadu_si256(s_vec++));
+        }
+        d = (char *)d_vec;
+        s = (const char *)s_vec;
+        n %= 32;
+    }
+    while (n--) {
+        *d++ = *s++;
+    }
+    return dest;
+}
+
+void *memset(void *s, int c, size_t n) {
+    char *p = (char *)s;
+    if (n >= 64) {
+        __m256i v = _mm256_set1_epi8((char)c);
+        size_t chunks = n / 32;
+        __m256i *p_vec = (__m256i *)p;
+        while (chunks--) {
+            _mm256_storeu_si256(p_vec++, v);
+        }
+        p = (char *)p_vec;
+        n %= 32;
+    }
+    while (n--) {
+        *p++ = (char)c;
+    }
+    return s;
+}
+EOF
+gcc -O3 -march=arrowlake-s -mtune=arrowlake-s -fPIC -shared -fno-builtin-memcpy -fno-builtin-memset \
+  -Wl,-O3 -Wl,-s /tmp/fastmem/fastmem.c -o /usr/lib64/libfastmem.so
+rm -rf /tmp/fastmem
+
 # Refresh shared library cache before building kernel/initramfs
 ldconfig
 
-# 10. Clear userspace LTO flags and swap in Custom Arrow Lake-S OGC Kernel
+# 15. Clear userspace LTO flags and swap in Custom Arrow Lake-S OGC Kernel
 unset CFLAGS CXXFLAGS LDFLAGS
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
@@ -142,12 +236,12 @@ dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/li
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
-# 11. Clean up build tools and caches
+# 16. Clean up build tools and caches
 dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
 dnf5 clean all
 ldconfig
 
-# 12. Enable services
+# 17. Enable services
 systemctl enable scx_loader.service
 systemctl mask NetworkManager-wait-online.service
 

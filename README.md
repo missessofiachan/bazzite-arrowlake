@@ -1,5 +1,7 @@
 # bazzite-arrowlake
 
+[![Build container image](https://github.com/missessofiachan/bazzite-arrowlake/actions/workflows/build.yml/badge.svg)](https://github.com/missessofiachan/bazzite-arrowlake/actions/workflows/build.yml)
+
 Custom, high-performance [bootc](https://github.com/bootc-dev/bootc) image based on **Bazzite Nvidia Open** (`ghcr.io/ublue-os/bazzite-nvidia-open:stable`), engineered specifically for **Intel Core Ultra 200 Series (Arrow Lake-S)** desktop processors paired with **NVIDIA GeForce RTX (Ada Lovelace)** GPUs.
 
 ---
@@ -7,15 +9,20 @@ Custom, high-performance [bootc](https://github.com/bootc-dev/bootc) image based
 ## ⚡ Key Highlights & Optimizations
 
 ### 1. Custom Arrow Lake-S Kernel & Rebuilt Drivers
-- **Kernel:** Incorporates customized, optimized OGC kernel RPMs built specifically with `-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe`.
+- **Kernel:** Incorporates customized, optimized OGC kernel RPMs built specifically with `-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe` from [missessofiachan/kernel-packagesArrowlake](https://github.com/missessofiachan/kernel-packagesArrowlake).
 - **Nvidia Open Kernel Modules:** Automatically compiles NVIDIA Open GPU drivers (`akmods --force --kernels "${KVER}" --kmod nvidia`) matching the custom kernel release during container build.
 - **Bootc-Compliant Initramfs:** Reproducible Dracut initramfs rebuilt against the custom kernel with OSTree support and hardware-tuned compression tools.
 
 ### 2. High-Performance Arrow Lake Userspace Toolchain
-Key system allocators and compression libraries are built natively for `arrowlake-s` with aggressive optimizations (`-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0`):
+Key system allocators, math routines, databases, security crypto, and compression libraries are built natively for `arrowlake-s` with aggressive optimizations (`-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0`):
 - **jemalloc 5.3.0 & mimalloc 2.1.7:** Low-overhead, high-throughput multi-threaded memory allocators for gaming and heavy workloads.
 - **zlib-ng 2.3.3:** Accelerated deflate implementation tuned for Arrow Lake architecture without AVX-512 extensions.
 - **zstd 1.5.7, libdeflate & lz4 1.10.0:** Native compression and decompression binaries and shared libraries for rapid asset and disk streaming.
+- **libjpeg-turbo 3.1.0:** SIMD/AVX2 accelerated texture and 2D image decoding for fast UI overlays and in-game asset streaming.
+- **SQLite3 3.48.0:** Natively compiled with memory optimizations and fast table indexing (`-DSQLITE_ENABLE_MEMSYS5`, `-DSQLITE_ENABLE_FTS5`, `-DSQLITE_ENABLE_RTREE`) for Steam, browser, and local game cache operations.
+- **SLEEF 3.6.1:** Hardware-vectorized SIMD math library (`libsleef.so.3`) tuned for AVX2 + FMA for physics, shaders, and gaming audio pipelines.
+- **OpenSSL 3.4.1 (`libcrypto.so.3` & `libssl.so.3`):** Hardware-accelerated cryptography with 64-bit NIST P-256 optimizations (`enable-ec_nistp_64_gcc_128`) and Arrow Lake native VAES/VPCLMULQDQ/SHA-NI acceleration for low-CPU game downloads and secure networking.
+- **FastMem Primitives (`libfastmem.so`):** Native AVX2 256-bit vectorized `memcpy` & `memset` preload library tailored for Arrow Lake's high L2 cache bandwidth.
 
 ### 3. Tuned Kernel Arguments (`10-arrowlake-gaming.toml`)
 Optimized for ultra-low latency, real-time audio/input responsiveness, and peak gaming frame rates:
@@ -88,5 +95,6 @@ just format
 ## 📦 Upstream & Architecture
 
 - **Base Image:** `ghcr.io/ublue-os/bazzite-nvidia-open:stable`
-- **Kernel RPM Source:** `ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest`
+- **Kernel Repository:** [missessofiachan/kernel-packagesArrowlake](https://github.com/missessofiachan/kernel-packagesArrowlake)
+- **Kernel RPM Package Registry:** `ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44`
 - **Container Registry:** `ghcr.io/missessofiachan/bazzite-arrowlake`
