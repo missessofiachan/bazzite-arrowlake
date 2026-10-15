@@ -18,13 +18,18 @@ on:
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      skip_rechunk:
+        description: 'Skip rpm-ostree rechunking (faster test builds)'
+        type: boolean
+        default: false
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.brand_name}}-${{ inputs.stream_name }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build_push:
@@ -51,6 +56,16 @@ jobs:
         shell: bash
         run: |
           just check
+
+      - name: Validate build scripts syntax
+        shell: bash
+        run: |
+          echo "Validating bash syntax for build scripts..."
+          bash -n build_files/build.sh
+          if [ -d system_files/usr/bin ]; then
+            find system_files/usr/bin/ -type f -exec bash -n {} +
+          fi
+          echo "Build scripts syntax validated successfully."
 
       - name: Image Name
         id: image-name
@@ -83,6 +98,7 @@ jobs:
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree
         id: rechunk
+        if: ${{ !inputs.skip_rechunk }}
         run: |
           just ostree-rechunk \
             ${IMAGE_NAME} \
@@ -136,11 +152,13 @@ jobs:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
+          test -n "${ALIAS_TAGS}"
           for tag in ${ALIAS_TAGS}; do
-            podman push --retry 5 --retry-delay 5s --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
+            podman push --retry 5 --retry-delay 5s --digestfile=/tmp/digestfile "${IMAGE_NAME}:${tag}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
           done
 
-          digest=$(< /tmp/digestfile)
+          digest=$(tr -d ' \n\r' < /tmp/digestfile)
+          test -n "${digest}"
 
           echo "digest=${digest}" >> $GITHUB_OUTPUT
 
@@ -163,8 +181,28 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           DIGEST: ${{ steps.push-image.outputs.digest }}
         run: |
+          if [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
+            echo "::warning::SIGNING_SECRET is not configured in repository secrets. Skipping image signing."
+            exit 0
+          fi
           # https://github.com/containers/container-libs/issues/388
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
+          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
 
+      - name: Generate Job Summary
+        if: always() && steps.build-image.outcome == 'success'
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## 🚀 Container Image Build Summary
+
+          - **Image:** \`${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}\`
+          - **Default Tag:** \`${{ env.DEFAULT_TAG }}\`
+          - **Tags Built:** \`${{ steps.gen-build-tags.outputs.alias_tags }}\`
+          - **Image Digest:** \`${{ steps.push-image.outputs.digest || 'Local/PR Build (Not Pushed)' }}\`
+
+          ### 📦 Rebase / Switch Command
+          \`\`\`bash
+          sudo bootc switch ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
+          \`\`\`
+          EOF
