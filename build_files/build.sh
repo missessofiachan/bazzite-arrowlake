@@ -286,6 +286,10 @@ dnf5 clean all
 ldconfig
 
 # 17. Install Mullvad VPN & Google Antigravity IDE
+# In OSTree/bootc base images, /opt is initially a symlink to /var/opt (which does not exist).
+# Standard Universal Blue practice: convert /opt to an immutable directory in / so RPMs and binaries install cleanly.
+rm -f /opt && mkdir -p /opt
+
 # 17a. Mullvad VPN (Client, CLI & systemd daemon)
 dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
 dnf5 install -y mullvad-vpn
