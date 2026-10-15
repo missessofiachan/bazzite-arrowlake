@@ -8,8 +8,9 @@ export CMAKE_POLICY_VERSION_MINIMUM=3.5
 cp -rv /ctx/system_files/* /
 rm -f /usr/share/ublue-os/image-template-check
 
-# 2. Install temporary compiler toolchain + kernel module build deps
-dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel elfutils-libelf-devel akmods
+# 2. Install temporary compiler toolchain
+dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel
+# (Kernel module build deps 'elfutils-libelf-devel akmods' disabled while custom kernel is on hold)
 
 # 3. Arrow Lake-S optimization flags (Userspace Libraries)
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0"
@@ -92,12 +93,10 @@ rm -rf /tmp/libjpeg-turbo
 # 11. Build Arrow Lake-S SQLite3 (libsqlite3.so.0)
 git clone --depth 1 --branch version-3.48.0 https://github.com/sqlite/sqlite.git /tmp/sqlite
 cd /tmp/sqlite
-./configure --prefix=/usr --libdir=/usr/lib64 --disable-static \
-  CFLAGS="${CFLAGS} -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION=1"
+./configure --prefix=/usr --libdir=/usr/lib64 --disable-static --disable-tcl --soname=legacy \
+  CFLAGS="${CFLAGS} -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_COLUMN_METADATA"
 make -j"$(nproc)"
-install -m 755 .libs/libsqlite3.so.0.* /usr/lib64/
-ln -sf libsqlite3.so.0.* /usr/lib64/libsqlite3.so.0
-ln -sf libsqlite3.so.0 /usr/lib64/libsqlite3.so
+make install
 cd / && rm -rf /tmp/sqlite
 
 # 12. Build Arrow Lake-S SLEEF SIMD Math Library (libsleef.so.3)
@@ -174,67 +173,84 @@ gcc -O3 -march=arrowlake-s -mtune=arrowlake-s -fPIC -shared -fno-builtin-memcpy 
   -Wl,-O3 -Wl,-s /tmp/fastmem/fastmem.c -o /usr/lib64/libfastmem.so
 rm -rf /tmp/fastmem
 
-# Refresh shared library cache before building kernel/initramfs
+# Refresh shared library cache
 ldconfig
 
-# 15. Clear userspace LTO flags and swap in Custom Arrow Lake-S OGC Kernel
+# 15. Clear userspace LTO flags
 unset CFLAGS CXXFLAGS LDFLAGS
-export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
-# Install oras
-dnf5 install -y oras
-
-# Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
-mkdir -p /tmp/ogc-rpms
-oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
-ls -la /tmp/ogc-rpms
-
-# Detect custom kernel version from downloaded RPMs (with fallback)
-KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
-KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
-
-# Back up Bazzite's prebuilt extra/ and updates/ modules (Nvidia Open 4080 Super, xone, v4l2loopback, etc.)
-mkdir -p /tmp/bazzite-extra-mods
-for mod_dir in "/usr/lib/modules/${KVER}" /usr/lib/modules/*; do
-    if [ -d "${mod_dir}/extra" ] && [ ! -d /tmp/bazzite-extra-mods/extra ]; then
-        cp -a "${mod_dir}/extra" /tmp/bazzite-extra-mods/
-    fi
-    if [ -d "${mod_dir}/updates" ] && [ ! -d /tmp/bazzite-extra-mods/updates ]; then
-        cp -a "${mod_dir}/updates" /tmp/bazzite-extra-mods/
-    fi
-done
-
-# Overwrite stock kernel RPMs IN-PLACE without removing nvidia-driver or running broken grub scriptlets
-rm -rf "/usr/lib/modules/${KVER}"
-rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
-    /tmp/ogc-rpms/kernel-[0-9]*.rpm \
-    /tmp/ogc-rpms/kernel-core-*.rpm \
-    /tmp/ogc-rpms/kernel-modules-*.rpm \
-    /tmp/ogc-rpms/kernel-devel-*.rpm \
-    /tmp/ogc-rpms/kernel-headers-*.rpm \
-    /tmp/ogc-rpms/kernel-tools-*.rpm
-
-# Restore Bazzite's extra/ and updates/ kernel modules (Nvidia Open, xone, etc.) into the new kernel tree
-if [ -d "/tmp/bazzite-extra-mods/extra" ]; then
-    cp -a /tmp/bazzite-extra-mods/extra "/usr/lib/modules/${KVER}/"
-fi
-if [ -d "/tmp/bazzite-extra-mods/updates" ]; then
-    cp -a /tmp/bazzite-extra-mods/updates "/usr/lib/modules/${KVER}/"
-fi
-rm -rf /tmp/bazzite-extra-mods
-
-# Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
-if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then
-    cp -a "/boot/vmlinuz-${KVER}" "/usr/lib/modules/${KVER}/vmlinuz"
-fi
-rm -f /boot/vmlinuz* /boot/initramfs*
-
-# Generate module dependencies & initramfs
-depmod -a "${KVER}"
-export DRACUT_NO_XATTR=1
-dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
-chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
-rm -rf /tmp/ogc-rpms
+# ==============================================================================
+# TODO: Re-enable Custom Arrow Lake-S OGC Kernel once NVIDIA driver loading is fixed.
+#
+# Reason:
+#   Swapping the kernel with the custom Arrow Lake-S OGC kernel caused NVIDIA
+#   drivers to fail to load (vermagic / kernel module ABI mismatch). Without
+#   NVIDIA GPU acceleration, the GUI fell back to llvmpipe software rendering,
+#   causing severe lag and very slow rendering.
+#
+# Required Steps to Re-enable:
+#   1. Compile or package matching nvidia-open kernel modules against the custom
+#      kernel version (e.g. via akmods or prebuilt kmods in CI).
+#   2. Verify kernel module symbol resolution and loadability (`modinfo nvidia`).
+#   3. Re-enable the kernel swap and initramfs generation steps below.
+# See TODO.md for more details.
+# ==============================================================================
+# export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
+#
+# # Install oras
+# dnf5 install -y oras
+#
+# # Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
+# mkdir -p /tmp/ogc-rpms
+# oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
+# ls -la /tmp/ogc-rpms
+#
+# # Detect custom kernel version from downloaded RPMs (with fallback)
+# KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
+# KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
+#
+# # Back up Bazzite's prebuilt extra/ and updates/ modules (Nvidia Open 4080 Super, xone, v4l2loopback, etc.)
+# mkdir -p /tmp/bazzite-extra-mods
+# for mod_dir in "/usr/lib/modules/${KVER}" /usr/lib/modules/*; do
+#     if [ -d "${mod_dir}/extra" ] && [ ! -d /tmp/bazzite-extra-mods/extra ]; then
+#         cp -a "${mod_dir}/extra" /tmp/bazzite-extra-mods/
+#     fi
+#     if [ -d "${mod_dir}/updates" ] && [ ! -d /tmp/bazzite-extra-mods/updates ]; then
+#         cp -a "${mod_dir}/updates" /tmp/bazzite-extra-mods/
+#     fi
+# done
+#
+# # Overwrite stock kernel RPMs IN-PLACE without removing nvidia-driver or running broken grub scriptlets
+# rm -rf "/usr/lib/modules/${KVER}"
+# rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
+#     /tmp/ogc-rpms/kernel-[0-9]*.rpm \
+#     /tmp/ogc-rpms/kernel-core-*.rpm \
+#     /tmp/ogc-rpms/kernel-modules-*.rpm \
+#     /tmp/ogc-rpms/kernel-devel-*.rpm \
+#     /tmp/ogc-rpms/kernel-headers-*.rpm \
+#     /tmp/ogc-rpms/kernel-tools-*.rpm
+#
+# # Restore Bazzite's extra/ and updates/ kernel modules (Nvidia Open, xone, etc.) into the new kernel tree
+# if [ -d "/tmp/bazzite-extra-mods/extra" ]; then
+#     cp -a /tmp/bazzite-extra-mods/extra "/usr/lib/modules/${KVER}/"
+# fi
+# if [ -d "/tmp/bazzite-extra-mods/updates" ]; then
+#     cp -a /tmp/bazzite-extra-mods/updates "/usr/lib/modules/${KVER}/"
+# fi
+# rm -rf /tmp/bazzite-extra-mods
+#
+# # Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
+# if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then
+#     cp -a "/boot/vmlinuz-${KVER}" "/usr/lib/modules/${KVER}/vmlinuz"
+# fi
+# rm -f /boot/vmlinuz* /boot/initramfs*
+#
+# # Generate module dependencies & initramfs
+# depmod -a "${KVER}"
+# export DRACUT_NO_XATTR=1
+# dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
+# chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
+# rm -rf /tmp/ogc-rpms
 
 # 16. Clean up build tools and caches
 dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true

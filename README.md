@@ -9,6 +9,9 @@ Custom, high-performance [bootc](https://github.com/bootc-dev/bootc) image based
 ## ⚡ Key Highlights & Optimizations
 
 ### 1. Custom Arrow Lake-S Kernel & Rebuilt Drivers
+> [!NOTE]
+> **Status:** The custom Arrow Lake-S kernel is temporarily on hold to ensure seamless NVIDIA Open driver compatibility and full GPU hardware acceleration. Bazzite's stock kernel with verified NVIDIA drivers is active for now. See [TODO.md](TODO.md) for details and roadmap.
+
 - **Kernel:** Incorporates customized, optimized OGC kernel RPMs built specifically with `-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe` from [missessofiachan/kernel-packagesArrowlake](https://github.com/missessofiachan/kernel-packagesArrowlake).
 - **Nvidia Open Kernel Modules:** Automatically compiles NVIDIA Open GPU drivers (`akmods --force --kernels "${KVER}" --kmod nvidia`) matching the custom kernel release during container build.
 - **Bootc-Compliant Initramfs:** Reproducible Dracut initramfs rebuilt against the custom kernel with OSTree support and hardware-tuned compression tools.
