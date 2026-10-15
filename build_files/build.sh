@@ -285,7 +285,7 @@ dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
 dnf5 clean all
 ldconfig
 
-# 17. Install Mullvad VPN & Google Antigravity IDE
+# 17. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
 # In OSTree/bootc base images, /opt is initially a symlink to /var/opt (which does not exist).
 # Standard Universal Blue practice: convert /opt to an immutable directory in / so RPMs and binaries install cleanly.
 rm -f /opt && mkdir -p /opt
@@ -295,7 +295,20 @@ dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/s
 dnf5 install -y mullvad-vpn
 dnf5 clean all
 
-# 17b. Google Antigravity IDE
+# 17b. Visual Studio Code
+rpm --import https://packages.microsoft.com/keys/microsoft.asc
+cat << 'EOF' > /etc/yum.repos.d/vscode.repo
+[code]
+name=Visual Studio Code
+baseurl=https://packages.microsoft.com/yumrepos/vscode
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+dnf5 install -y code
+dnf5 clean all
+
+# 17c. Google Antigravity GUI program
 mkdir -p /opt/antigravity
 curl -sSL "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz" | tar -xz -C /opt/antigravity --strip-components=1
 ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
@@ -304,8 +317,8 @@ mkdir -p /usr/share/applications
 cat << 'EOF' > /usr/share/applications/antigravity.desktop
 [Desktop Entry]
 Name=Antigravity
-Comment=Google Antigravity IDE & AI Agent Platform
-GenericName=AI Agent Platform
+Comment=Google Antigravity GUI Program
+GenericName=GUI Program
 Exec=/usr/bin/antigravity %F
 Icon=antigravity
 Type=Application
@@ -313,14 +326,14 @@ StartupNotify=true
 StartupWMClass=Antigravity
 Categories=Development;IDE;Utility;
 MimeType=x-scheme-handler/antigravity;
-Keywords=antigravity;agent;ai;ide;
+Keywords=antigravity;gui;
 EOF
 
 cat << 'EOF' > /usr/share/applications/antigravity-url-handler.desktop
 [Desktop Entry]
 Name=Antigravity - URL Handler
-Comment=Google Antigravity IDE & AI Agent Platform URL Handler
-GenericName=AI Agent Platform
+Comment=Google Antigravity GUI Program URL Handler
+GenericName=GUI Program
 Exec=/usr/bin/antigravity "%U"
 Icon=antigravity
 Type=Application
