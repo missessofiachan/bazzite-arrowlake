@@ -24,7 +24,7 @@ Key system allocators, math routines, databases, security crypto, and compressio
 - **libjpeg-turbo 3.1.0:** SIMD/AVX2 accelerated texture and 2D image decoding for fast UI overlays and in-game asset streaming.
 - **SQLite3 3.48.0:** Natively compiled with memory optimizations and fast table indexing (`-DSQLITE_ENABLE_MEMSYS5`, `-DSQLITE_ENABLE_FTS5`, `-DSQLITE_ENABLE_RTREE`) for Steam, browser, and local game cache operations.
 - **SLEEF 3.6.1:** Hardware-vectorized SIMD math library (`libsleef.so.3`) tuned for AVX2 + FMA for physics, shaders, and gaming audio pipelines.
-- **OpenSSL (`libcrypto.so.3` & `libssl.so.3`):** Hardware-accelerated cryptography matching system version with 64-bit NIST P-256 optimizations (`enable-ec_nistp_64_gcc_128`) and Arrow Lake native VAES/VPCLMULQDQ/SHA-NI acceleration for low-CPU game downloads and secure networking.
+- **OpenSSL (`libcrypto.so.3` & `libssl.so.3`):** *(Temporarily on hold for system utility compatibility; see [TODO.md](TODO.md))* Stock OpenSSL with native dynamic CPU acceleration (VAES/SHA-NI) remains active.
 - **FastMem Primitives (`libfastmem.so`):** Native AVX2 256-bit vectorized `memcpy` & `memset` preload library tailored for Arrow Lake's high L2 cache bandwidth.
 
 ### 3. Tuned Kernel Arguments (`10-arrowlake-gaming.toml`)

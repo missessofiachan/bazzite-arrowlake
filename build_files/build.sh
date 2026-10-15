@@ -108,39 +108,48 @@ cmake --build /tmp/sleef/build
 cmake --install /tmp/sleef/build
 rm -rf /tmp/sleef
 
-# 13. Build Arrow Lake-S OpenSSL (libcrypto.so.3 & libssl.so.3 with VAES/SHA-NI)
-OPENSSL_SYS_VER=$(rpm -q --qf "%{VERSION}\n" openssl-libs 2>/dev/null | head -n 1 || true)
-OPENSSL_BRANCH="openssl-${OPENSSL_SYS_VER:-3.5.9}"
-git clone --depth 1 --branch "${OPENSSL_BRANCH}" https://github.com/openssl/openssl.git /tmp/openssl || \
-git clone --depth 1 --branch openssl-3.5.9 https://github.com/openssl/openssl.git /tmp/openssl || \
-git clone --depth 1 --branch openssl-3.4.1 https://github.com/openssl/openssl.git /tmp/openssl
-cd /tmp/openssl
-./Configure linux-x86_64 --prefix=/usr --libdir=lib64 --openssldir=/etc/pki/tls \
-  shared enable-ec_nistp_64_gcc_128 no-static-engine no-tests \
-  "${CFLAGS}"
-make -j"$(nproc)" build_libs
-
-# Detect system shared library targets (e.g. /usr/lib64/libcrypto.so.3.5.9 on Fedora/Bazzite)
-SYS_CRYPTO_SO=$(readlink -f /usr/lib64/libcrypto.so.3 2>/dev/null || true)
-SYS_SSL_SO=$(readlink -f /usr/lib64/libssl.so.3 2>/dev/null || true)
-
-if [ -n "${SYS_CRYPTO_SO}" ] && [ "$(basename "${SYS_CRYPTO_SO}")" != "libcrypto.so.3" ]; then
-    install -m 755 /tmp/openssl/libcrypto.so.3 "${SYS_CRYPTO_SO}"
-    ln -sf "$(basename "${SYS_CRYPTO_SO}")" /usr/lib64/libcrypto.so.3
-else
-    install -m 755 /tmp/openssl/libcrypto.so.3 /usr/lib64/libcrypto.so.3
-fi
-
-if [ -n "${SYS_SSL_SO}" ] && [ "$(basename "${SYS_SSL_SO}")" != "libssl.so.3" ]; then
-    install -m 755 /tmp/openssl/libssl.so.3 "${SYS_SSL_SO}"
-    ln -sf "$(basename "${SYS_SSL_SO}")" /usr/lib64/libssl.so.3
-else
-    install -m 755 /tmp/openssl/libssl.so.3 /usr/lib64/libssl.so.3
-fi
-
-ln -sf libcrypto.so.3 /usr/lib64/libcrypto.so
-ln -sf libssl.so.3 /usr/lib64/libssl.so
-cd / && rm -rf /tmp/openssl
+# ==============================================================================
+# TODO: Re-enable Custom Arrow Lake-S OpenSSL (libcrypto.so.3 & libssl.so.3)
+#
+# Reason:
+#   Building and swapping system-critical OpenSSL libraries in-place is temporarily
+#   deferred to ensure stability and compatibility across core system utilities
+#   (DNF5, RPM, Curl, systemd). Stock OpenSSL 3.5.x libraries with native hardware
+#   crypto acceleration remain active. See TODO.md for details.
+# ==============================================================================
+# # 13. Build Arrow Lake-S OpenSSL (libcrypto.so.3 & libssl.so.3 with VAES/SHA-NI)
+# OPENSSL_SYS_VER=$(rpm -q --qf "%{VERSION}\n" openssl-libs 2>/dev/null | head -n 1 || true)
+# OPENSSL_BRANCH="openssl-${OPENSSL_SYS_VER:-3.5.9}"
+# git clone --depth 1 --branch "${OPENSSL_BRANCH}" https://github.com/openssl/openssl.git /tmp/openssl || \
+# git clone --depth 1 --branch openssl-3.5.9 https://github.com/openssl/openssl.git /tmp/openssl || \
+# git clone --depth 1 --branch openssl-3.4.1 https://github.com/openssl/openssl.git /tmp/openssl
+# cd /tmp/openssl
+# ./Configure linux-x86_64 --prefix=/usr --libdir=lib64 --openssldir=/etc/pki/tls \
+#   shared enable-ec_nistp_64_gcc_128 no-static-engine no-tests \
+#   "${CFLAGS}"
+# make -j"$(nproc)" build_libs
+#
+# # Detect system shared library targets (e.g. /usr/lib64/libcrypto.so.3.5.9 on Fedora/Bazzite)
+# SYS_CRYPTO_SO=$(readlink -f /usr/lib64/libcrypto.so.3 2>/dev/null || true)
+# SYS_SSL_SO=$(readlink -f /usr/lib64/libssl.so.3 2>/dev/null || true)
+#
+# if [ -n "${SYS_CRYPTO_SO}" ] && [ "$(basename "${SYS_CRYPTO_SO}")" != "libcrypto.so.3" ]; then
+#     install -m 755 /tmp/openssl/libcrypto.so.3 "${SYS_CRYPTO_SO}"
+#     ln -sf "$(basename "${SYS_CRYPTO_SO}")" /usr/lib64/libcrypto.so.3
+# else
+#     install -m 755 /tmp/openssl/libcrypto.so.3 /usr/lib64/libcrypto.so.3
+# fi
+#
+# if [ -n "${SYS_SSL_SO}" ] && [ "$(basename "${SYS_SSL_SO}")" != "libssl.so.3" ]; then
+#     install -m 755 /tmp/openssl/libssl.so.3 "${SYS_SSL_SO}"
+#     ln -sf "$(basename "${SYS_SSL_SO}")" /usr/lib64/libssl.so.3
+# else
+#     install -m 755 /tmp/openssl/libssl.so.3 /usr/lib64/libssl.so.3
+# fi
+#
+# ln -sf libcrypto.so.3 /usr/lib64/libcrypto.so
+# ln -sf libssl.so.3 /usr/lib64/libssl.so
+# cd / && rm -rf /tmp/openssl
 
 # 14. Build Arrow Lake-S AVX2 Fast Memory Primitives (libfastmem.so for memcpy & memset)
 mkdir -p /tmp/fastmem
