@@ -20,7 +20,7 @@ Kernel modules in Linux enforce strict vermagic and ABI verification (`module_la
 - Section 15 in `build_files/build.sh` (custom kernel RPM installation, module copying, and Dracut initramfs regeneration) is temporarily commented out.
 - The build retains the upstream Bazzite stock kernel with its matching, verified NVIDIA Open drivers (`bazzite-nvidia-open:stable`).
 - Hardware GPU acceleration, NVENC, and low-latency Wayland rendering function out-of-the-box.
-- All userspace optimizations (Arrow Lake-S native builds for jemalloc, mimalloc, zlib-ng, zstd, libdeflate, lz4, libjpeg-turbo, SQLite3, SLEEF, OpenSSL 3.4, and fastmem) remain active.
+- All userspace optimizations (Arrow Lake-S native builds for jemalloc, mimalloc, zlib-ng, zstd, libdeflate, lz4, libjpeg-turbo, SQLite3, SLEEF, OpenSSL, and fastmem) remain active.
 
 ### Action Plan to Re-enable Custom Kernel
 - [ ] **1. Dedicated NVIDIA Kmod Compilation:**
