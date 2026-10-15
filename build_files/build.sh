@@ -285,7 +285,54 @@ dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
 dnf5 clean all
 ldconfig
 
-# 17. Enable services
+# 17. Install Mullvad VPN & Google Antigravity IDE
+# 17a. Mullvad VPN (Client, CLI & systemd daemon)
+dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
+dnf5 install -y mullvad-vpn
+dnf5 clean all
+
+# 17b. Google Antigravity IDE
+mkdir -p /opt/antigravity
+curl -sSL "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz" | tar -xz -C /opt/antigravity --strip-components=1
+ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
+
+mkdir -p /usr/share/applications
+cat << 'EOF' > /usr/share/applications/antigravity.desktop
+[Desktop Entry]
+Name=Antigravity
+Comment=Google Antigravity IDE & AI Agent Platform
+GenericName=AI Agent Platform
+Exec=/usr/bin/antigravity %F
+Icon=antigravity
+Type=Application
+StartupNotify=true
+StartupWMClass=Antigravity
+Categories=Development;IDE;Utility;
+MimeType=x-scheme-handler/antigravity;
+Keywords=antigravity;agent;ai;ide;
+EOF
+
+cat << 'EOF' > /usr/share/applications/antigravity-url-handler.desktop
+[Desktop Entry]
+Name=Antigravity - URL Handler
+Comment=Google Antigravity IDE & AI Agent Platform URL Handler
+GenericName=AI Agent Platform
+Exec=/usr/bin/antigravity "%U"
+Icon=antigravity
+Type=Application
+NoDisplay=true
+Terminal=false
+StartupNotify=true
+StartupWMClass=Antigravity
+Categories=Utility;Development;
+MimeType=x-scheme-handler/antigravity;
+Keywords=antigravity;
+EOF
+
+update-desktop-database /usr/share/applications || true
+
+# 18. Enable services
 systemctl enable scx_loader.service
+systemctl enable mullvad-daemon.service
 systemctl mask NetworkManager-wait-online.service
 

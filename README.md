@@ -42,6 +42,8 @@ Optimized for ultra-low latency, real-time audio/input responsiveness, and peak 
 - **I/O & Sysctl:** NVMe/SSD gaming queue scheduler rules (`60-iosched-gaming.rules`) and virtual memory responsiveness tweaks (`99-bazzite-arrowlake.conf`).
 - **Pro Audio:** PipeWire latency and quantum settings optimized for gaming audio (`99-gaming-audio.conf`).
 - **Network:** Disabled Wi-Fi power saving and masked blocking network wait services (`NetworkManager-wait-online.service`).
+- **Mullvad VPN:** Preinstalled official client, CLI, and systemd service (`mullvad-daemon.service`) for instant privacy protection and secure networking.
+- **Google Antigravity IDE:** Integrated AI development and agent orchestration platform (`/usr/bin/antigravity`) with desktop entry and custom protocol handler (`x-scheme-handler/antigravity`).
 
 ---
 
