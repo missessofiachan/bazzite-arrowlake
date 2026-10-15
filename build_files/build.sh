@@ -8,10 +8,10 @@ export CMAKE_POLICY_VERSION_MINIMUM=3.5
 cp -rv /ctx/system_files/* /
 rm -f /usr/share/ublue-os/image-template-check
 
-# 2. Install temporary compiler toolchain
-dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel
+# 2. Install temporary compiler toolchain + kernel module build deps
+dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel elfutils-libelf-devel akmods
 
-# 3. Arrow Lake-S optimization flags
+# 3. Arrow Lake-S optimization flags (Userspace Libraries)
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-Wl,-O3 -Wl,--as-needed -flto=auto -Wl,-s"
@@ -80,11 +80,47 @@ install -m 755 "${LZ4_SO}" /usr/lib64/
 ln -sf "$(basename "${LZ4_SO}")" /usr/lib64/liblz4.so.1
 rm -rf /tmp/lz4
 
-# 10. Clean up and refresh
+# Refresh shared library cache before building kernel/initramfs
+ldconfig
+
+# 10. Clear userspace LTO flags and swap in Custom Arrow Lake-S OGC Kernel
+unset CFLAGS CXXFLAGS LDFLAGS
+export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe"
+
+# Remove stock kernel packages & prebuilt kmod-nvidia tied to stock kernel
+dnf5 remove -y --no-autoremove \
+    kernel \
+    kernel-core \
+    kernel-modules \
+    kernel-modules-core \
+    kernel-modules-extra \
+    kmod-nvidia* || true
+
+# Install custom Arrow Lake-S OGC kernel RPMs (find handles flat or nested directories)
+RPMS=$(find /tmp/ogc-rpms -type f -name "kernel-*.rpm" ! -name "*debug*" ! -name "*src.rpm")
+dnf5 install -y ${RPMS}
+
+# Detect the installed custom kernel version
+KVER=$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core | head -n 1)
+echo "Building Nvidia Open driver and initramfs for custom kernel: ${KVER}"
+
+# Compile Nvidia Open kernel module (RTX 4080 Super) against new kernel headers
+akmods --force --kernels "${KVER}" --kmod nvidia
+modinfo "/usr/lib/modules/${KVER}/extra/nvidia/nvidia.ko"*
+
+# Rebuild initramfs (automatically includes your Arrow Lake-S zstd/lz4/zlib-ng)
+depmod -a "${KVER}"
+export DRACUT_NO_XATTR=1
+dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
+chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
+rm -rf /tmp/ogc-rpms
+
+# 11. Clean up build tools and caches
 dnf5 remove -y cmake ninja-build autoconf automake
 dnf5 clean all
 ldconfig
 
-# 11. Enable services
+# 12. Enable services
 systemctl enable scx_loader.service
 systemctl mask NetworkManager-wait-online.service
+
