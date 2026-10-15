@@ -237,18 +237,7 @@ unset CFLAGS CXXFLAGS LDFLAGS
 # KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
 # KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
 #
-# # Back up Bazzite's prebuilt extra/ and updates/ modules (Nvidia Open 4080 Super, xone, v4l2loopback, etc.)
-# mkdir -p /tmp/bazzite-extra-mods
-# for mod_dir in "/usr/lib/modules/${KVER}" /usr/lib/modules/*; do
-#     if [ -d "${mod_dir}/extra" ] && [ ! -d /tmp/bazzite-extra-mods/extra ]; then
-#         cp -a "${mod_dir}/extra" /tmp/bazzite-extra-mods/
-#     fi
-#     if [ -d "${mod_dir}/updates" ] && [ ! -d /tmp/bazzite-extra-mods/updates ]; then
-#         cp -a "${mod_dir}/updates" /tmp/bazzite-extra-mods/
-#     fi
-# done
-#
-# # Overwrite stock kernel RPMs IN-PLACE without removing nvidia-driver or running broken grub scriptlets
+# # Overwrite stock kernel RPMs and install matching kmods (NVIDIA Open, xone, v4l2loopback)
 # rm -rf "/usr/lib/modules/${KVER}"
 # rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
 #     /tmp/ogc-rpms/kernel-[0-9]*.rpm \
@@ -256,16 +245,8 @@ unset CFLAGS CXXFLAGS LDFLAGS
 #     /tmp/ogc-rpms/kernel-modules-*.rpm \
 #     /tmp/ogc-rpms/kernel-devel-*.rpm \
 #     /tmp/ogc-rpms/kernel-headers-*.rpm \
-#     /tmp/ogc-rpms/kernel-tools-*.rpm
-#
-# # Restore Bazzite's extra/ and updates/ kernel modules (Nvidia Open, xone, etc.) into the new kernel tree
-# if [ -d "/tmp/bazzite-extra-mods/extra" ]; then
-#     cp -a /tmp/bazzite-extra-mods/extra "/usr/lib/modules/${KVER}/"
-# fi
-# if [ -d "/tmp/bazzite-extra-mods/updates" ]; then
-#     cp -a /tmp/bazzite-extra-mods/updates "/usr/lib/modules/${KVER}/"
-# fi
-# rm -rf /tmp/bazzite-extra-mods
+#     /tmp/ogc-rpms/kernel-tools-*.rpm \
+#     /tmp/ogc-rpms/kmod-*.rpm
 #
 # # Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
 # if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then

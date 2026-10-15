@@ -23,12 +23,10 @@ Kernel modules in Linux enforce strict vermagic and ABI verification (`module_la
 - All other userspace optimizations (Arrow Lake-S native builds for jemalloc, mimalloc, zlib-ng, zstd, libdeflate, lz4, libjpeg-turbo, SQLite3, SLEEF, and fastmem) remain active.
 
 ### Action Plan to Re-enable Custom Kernel
-- [ ] **1. Dedicated NVIDIA Kmod Compilation:**
-  - Build the NVIDIA open kernel modules against the specific custom kernel headers (`kernel-devel` and `kernel-headers` matching `${KVER}`).
-  - *Option A:* Build in container during image creation using `akmods --force --kernels "${KVER}" --kmod nvidia`.
-  - *Option B (Recommended):* Compile `kmod-nvidia` in the [kernel-packagesArrowlake](https://github.com/missessofiachan/kernel-packagesArrowlake) CI repository and publish pre-built matching NVIDIA RPMs to the ORAS registry alongside `kernel-core`.
-- [ ] **2. Rebuild Out-of-tree Auxiliary Modules:**
-  - Build matching modules for other Bazzite dependencies if needed (`xone` for Xbox dongles, `v4l2loopback` for virtual cameras).
+- [x] **1. Dedicated NVIDIA Kmod Compilation:**
+  - Implemented in [kernel-packagesArrowlake/.github/workflows/fedora.yaml](file:///run/media/sofia/cc258147-6cb1-40b1-b682-64f9c8f50f64/GitHub/kernel-packagesArrowlake/.github/workflows/fedora.yaml). The CI pipeline now compiles `kmod-nvidia-open` directly against the custom kernel's `kernel-devel` RPM and packages it into the ORAS OCI artifact.
+- [x] **2. Rebuild Out-of-tree Auxiliary Modules:**
+  - Automated in kernel CI (`akmod-xone` and `akmod-v4l2loopback`).
 - [ ] **3. Verification Checkpoints:**
   - Run `modinfo nvidia` and verify vermagic matches `${KVER}` and symbols resolve without error.
   - Verify `nvidia-smi` successfully communicates with the GPU.
