@@ -87,36 +87,55 @@ ldconfig
 unset CFLAGS CXXFLAGS LDFLAGS
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
-# Install oras and kernel module build tools
-dnf5 install -y oras akmods elfutils-libelf-devel
+# Install oras
+dnf5 install -y oras
 
 # Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
 mkdir -p /tmp/ogc-rpms
 oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
 ls -la /tmp/ogc-rpms
 
-# Remove stock kernel packages & prebuilt kmod-nvidia tied to stock kernel
-dnf5 remove -y --no-autoremove \
-    kernel \
-    kernel-core \
-    kernel-modules \
-    kernel-modules-core \
-    kernel-modules-extra \
-    kmod-nvidia* || true
+# Detect custom kernel version from downloaded RPMs (with fallback)
+KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
+KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
 
-# Install custom Arrow Lake-S OGC kernel RPMs
-RPMS=$(find /tmp/ogc-rpms -type f -name "kernel-*.rpm" ! -name "*debug*" ! -name "*src.rpm")
-dnf5 install -y ${RPMS}
+# Back up Bazzite's prebuilt extra/ and updates/ modules (Nvidia Open 4080 Super, xone, v4l2loopback, etc.)
+mkdir -p /tmp/bazzite-extra-mods
+for mod_dir in "/usr/lib/modules/${KVER}" /usr/lib/modules/*; do
+    if [ -d "${mod_dir}/extra" ] && [ ! -d /tmp/bazzite-extra-mods/extra ]; then
+        cp -a "${mod_dir}/extra" /tmp/bazzite-extra-mods/
+    fi
+    if [ -d "${mod_dir}/updates" ] && [ ! -d /tmp/bazzite-extra-mods/updates ]; then
+        cp -a "${mod_dir}/updates" /tmp/bazzite-extra-mods/
+    fi
+done
 
-# Detect the installed custom kernel version
-KVER=$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core | head -n 1)
-echo "Building Nvidia Open driver and initramfs for custom kernel: ${KVER}"
+# Overwrite stock kernel RPMs IN-PLACE without removing nvidia-driver or running broken grub scriptlets
+rm -rf "/usr/lib/modules/${KVER}"
+rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
+    /tmp/ogc-rpms/kernel-[0-9]*.rpm \
+    /tmp/ogc-rpms/kernel-core-*.rpm \
+    /tmp/ogc-rpms/kernel-modules-*.rpm \
+    /tmp/ogc-rpms/kernel-devel-*.rpm \
+    /tmp/ogc-rpms/kernel-headers-*.rpm \
+    /tmp/ogc-rpms/kernel-tools-*.rpm
 
-# Compile Nvidia Open kernel module (RTX 4080 Super) against new kernel headers
-akmods --force --kernels "${KVER}" --kmod nvidia
-modinfo "/usr/lib/modules/${KVER}/extra/nvidia/nvidia.ko"*
+# Restore Bazzite's extra/ and updates/ kernel modules (Nvidia Open, xone, etc.) into the new kernel tree
+if [ -d "/tmp/bazzite-extra-mods/extra" ]; then
+    cp -a /tmp/bazzite-extra-mods/extra "/usr/lib/modules/${KVER}/"
+fi
+if [ -d "/tmp/bazzite-extra-mods/updates" ]; then
+    cp -a /tmp/bazzite-extra-mods/updates "/usr/lib/modules/${KVER}/"
+fi
+rm -rf /tmp/bazzite-extra-mods
 
-# Rebuild initramfs (automatically includes your Arrow Lake-S zstd/lz4/zlib-ng)
+# Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
+if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then
+    cp -a "/boot/vmlinuz-${KVER}" "/usr/lib/modules/${KVER}/vmlinuz"
+fi
+rm -f /boot/vmlinuz* /boot/initramfs*
+
+# Generate module dependencies & initramfs
 depmod -a "${KVER}"
 export DRACUT_NO_XATTR=1
 dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
@@ -124,7 +143,7 @@ chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
 # 11. Clean up build tools and caches
-dnf5 remove -y cmake ninja-build autoconf automake oras
+dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
 dnf5 clean all
 ldconfig
 
