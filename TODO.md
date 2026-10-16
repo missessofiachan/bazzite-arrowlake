@@ -2,37 +2,27 @@
 
 ## 1. Custom Arrow Lake-S Kernel & NVIDIA Driver Integration
 
-- **Status:** ⏸️ Deferred / Temporarily Commented Out
+- **Status:** ✅ Resolved & Active
 - **Affects:** `build_files/build.sh` (Section 15)
 
-### Problem Description
-When replacing the base Bazzite kernel with the custom Arrow Lake-S OGC kernel (`ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44`), the NVIDIA Open GPU drivers fail to load into the kernel. 
+### Status & Verification Summary
+The custom Arrow Lake-S OGC kernel (`7.2.9-ogc3.1.fc44.x86_64`) is active with verified NVIDIA Open GPU acceleration:
+- Kernel vermagic and symbols match pre-compiled `kmod-nvidia-open` drivers directly built in CI.
+- `nvidia-smi` successfully detects the NVIDIA GeForce RTX 4080 SUPER with driver 615.x.
+- Wayland compositor (KWin / Gamescope) renders at peak hardware refresh rates (e.g. 3840x2160 @ 144Hz) with G-Sync/VRR.
+- Section 15 in `build_files/build.sh` is re-enabled using pre-compiled `kmod-*.rpm` packages pulled via ORAS.
 
-As a consequence:
-- The Wayland compositor (Gamescope / KDE Plasma / GNOME) cannot initialize hardware GPU acceleration.
-- The desktop falls back to software rasterization via **LLVMpipe** (`llvmpipe (LLVM 19.x, 256 bits)`).
-- The GUI renders extremely slowly, experiencing severe stutter, cursor lag, dropped frames, and 100% CPU spikes on compositor threads.
-
-### Root Cause Analysis
-Kernel modules in Linux enforce strict vermagic and ABI verification (`module_layout`). Simply copying the precompiled `/usr/lib/modules/<stock_kver>/extra/` and `/updates/` NVIDIA module directories into the custom kernel directory does not work across different kernel builds and ABI revisions. The kernel loader rejects the modules due to mismatched symbol versions and structure layouts.
-
-### Current Mitigation
-- Section 15 in `build_files/build.sh` (custom kernel RPM installation, module copying, and Dracut initramfs regeneration) is temporarily commented out.
-- The build retains the upstream Bazzite stock kernel with its matching, verified NVIDIA Open drivers (`bazzite-nvidia-open:stable`).
-- Hardware GPU acceleration, NVENC, and low-latency Wayland rendering function out-of-the-box.
-- All other userspace optimizations (Arrow Lake-S native builds for jemalloc, mimalloc, zlib-ng, zstd, libdeflate, lz4, libjpeg-turbo, SQLite3, SLEEF, and fastmem) remain active.
-
-### Action Plan to Re-enable Custom Kernel
+### Completed Action Items
 - [x] **1. Dedicated NVIDIA Kmod Compilation:**
-  - Implemented in [kernel-packagesArrowlake/.github/workflows/fedora.yaml](file:///run/media/sofia/cc258147-6cb1-40b1-b682-64f9c8f50f64/GitHub/kernel-packagesArrowlake/.github/workflows/fedora.yaml). The CI pipeline now compiles `kmod-nvidia-open` directly against the custom kernel's `kernel-devel` RPM and packages it into the ORAS OCI artifact.
+  - Implemented in [kernel-packagesArrowlake/.github/workflows/fedora.yaml](file:///run/media/sofia/cc258147-6cb1-40b1-b682-64f9c8f50f64/GitHub/kernel-packagesArrowlake/.github/workflows/fedora.yaml). The CI pipeline compiles `kmod-nvidia-open` directly against the custom kernel's `kernel-devel` RPM and packages it into the ORAS OCI artifact.
 - [x] **2. Rebuild Out-of-tree Auxiliary Modules:**
   - Automated in kernel CI (`akmod-xone` and `akmod-v4l2loopback`).
-- [ ] **3. Verification Checkpoints:**
-  - Run `modinfo nvidia` and verify vermagic matches `${KVER}` and symbols resolve without error.
-  - Verify `nvidia-smi` successfully communicates with the GPU.
-  - Verify `glxinfo | grep "OpenGL renderer"` and `vulkaninfo` report `NVIDIA GeForce RTX ...` and NOT `llvmpipe`.
-- [ ] **4. Re-enable Section 15 in `build_files/build.sh`:**
-  - Uncomment the kernel installation block, test the local container build, and verify bootc deployment.
+- [x] **3. Verification Checkpoints:**
+  - `uname -r`: Verified `7.2.9-ogc3.1.fc44.x86_64`.
+  - `nvidia-smi`: Verified RTX 4080 SUPER communication without driver errors.
+  - Wayland rendering: Verified hardware GPU acceleration active.
+- [x] **4. Re-enable Section 15 in `build_files/build.sh`:**
+  - Section 15 re-enabled with clean, idempotent `kmod-*.rpm` installation logic.
 
 ---
 

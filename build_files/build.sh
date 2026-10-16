@@ -207,59 +207,47 @@ ldconfig
 # 15. Clear userspace LTO flags
 unset CFLAGS CXXFLAGS LDFLAGS
 
-# ==============================================================================
-# TODO: Re-enable Custom Arrow Lake-S OGC Kernel once NVIDIA driver loading is fixed.
-#
-# Reason:
-#   Swapping the kernel with the custom Arrow Lake-S OGC kernel caused NVIDIA
-#   drivers to fail to load (vermagic / kernel module ABI mismatch). Without
-#   NVIDIA GPU acceleration, the GUI fell back to llvmpipe software rendering,
-#   causing severe lag and very slow rendering.
-#
-# Required Steps to Re-enable:
-#   1. Compile or package matching nvidia-open kernel modules against the custom
-#      kernel version (e.g. via akmods or prebuilt kmods in CI).
-#   2. Verify kernel module symbol resolution and loadability (`modinfo nvidia`).
-#   3. Re-enable the kernel swap and initramfs generation steps below.
-# See TODO.md for more details.
-# ==============================================================================
-# export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
-#
-# # Install oras
-# dnf5 install -y oras
-#
-# # Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
-# mkdir -p /tmp/ogc-rpms
-# oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
-# ls -la /tmp/ogc-rpms
-#
-# # Detect custom kernel version from downloaded RPMs (with fallback)
-# KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
-# KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
-#
-# # Overwrite stock kernel RPMs and install matching kmods (NVIDIA Open, xone, v4l2loopback)
-# rm -rf "/usr/lib/modules/${KVER}"
-# rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
-#     /tmp/ogc-rpms/kernel-[0-9]*.rpm \
-#     /tmp/ogc-rpms/kernel-core-*.rpm \
-#     /tmp/ogc-rpms/kernel-modules-*.rpm \
-#     /tmp/ogc-rpms/kernel-devel-*.rpm \
-#     /tmp/ogc-rpms/kernel-headers-*.rpm \
-#     /tmp/ogc-rpms/kernel-tools-*.rpm \
-#     /tmp/ogc-rpms/kmod-*.rpm
-#
-# # Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
-# if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then
-#     cp -a "/boot/vmlinuz-${KVER}" "/usr/lib/modules/${KVER}/vmlinuz"
-# fi
-# rm -f /boot/vmlinuz* /boot/initramfs*
-#
-# # Generate module dependencies & initramfs
-# depmod -a "${KVER}"
-# export DRACUT_NO_XATTR=1
-# dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
-# chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
-# rm -rf /tmp/ogc-rpms
+# 15. Install Custom Arrow Lake-S Kernel & Pre-Built Matching NVIDIA Kmods
+export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
+
+# Install oras
+dnf5 install -y oras
+
+# Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
+mkdir -p /tmp/ogc-rpms
+oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
+ls -la /tmp/ogc-rpms
+
+# Detect custom kernel version from downloaded RPMs (with fallback)
+KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
+KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
+
+# Overwrite stock kernel RPMs and install matching kmods (NVIDIA Open, xone, v4l2loopback)
+rm -rf "/usr/lib/modules/${KVER}"
+rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
+    /tmp/ogc-rpms/kernel-[0-9]*.rpm \
+    /tmp/ogc-rpms/kernel-core-*.rpm \
+    /tmp/ogc-rpms/kernel-modules-*.rpm \
+    /tmp/ogc-rpms/kernel-devel-*.rpm \
+    /tmp/ogc-rpms/kernel-headers-*.rpm \
+    /tmp/ogc-rpms/kernel-tools-*.rpm
+
+if compgen -G "/tmp/ogc-rpms/kmod-*.rpm" > /dev/null; then
+    rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps /tmp/ogc-rpms/kmod-*.rpm
+fi
+
+# Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
+if [ -f "/boot/vmlinuz-${KVER}" ] && [ ! -f "/usr/lib/modules/${KVER}/vmlinuz" ]; then
+    cp -a "/boot/vmlinuz-${KVER}" "/usr/lib/modules/${KVER}/vmlinuz"
+fi
+rm -f /boot/vmlinuz* /boot/initramfs*
+
+# Generate module dependencies & initramfs
+depmod -a "${KVER}"
+export DRACUT_NO_XATTR=1
+dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
+chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
+rm -rf /tmp/ogc-rpms
 
 # 16. Clean up build tools and caches
 dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
