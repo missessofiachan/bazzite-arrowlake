@@ -1,0 +1,79 @@
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "source": "bazzite"
+    },
+    "display": {
+        "separator": " ➜ "
+    },
+    "modules": [
+        "title",
+        "separator",
+        {
+            "type": "os",
+            "key": "OS",
+            "format": "{name} ({codename}) [x86_64]"
+        },
+        {
+            "type": "command",
+            "key": "Image",
+            "text": "BASE=$(jq -r '\"\\(.[\"image-name\"]):\\(.[\"image-tag\"])\"' /usr/share/ublue-os/image-info.json 2>/dev/null || true); DEPLOYED=$(rpm-ostree status --json 2>/dev/null | jq -r '.deployments[0][\"container-image-reference\"] // empty' | sed -E 's|^[a-zA-Z0-9_-]+:docker://||; s|^[a-zA-Z0-9_-]+:||'); if [ -n \"$DEPLOYED\" ] && [ -n \"$BASE\" ]; then echo \"$DEPLOYED (base: $BASE)\"; elif [ -n \"$DEPLOYED\" ]; then echo \"$DEPLOYED\"; elif [ -n \"$BASE\" ]; then echo \"$BASE\"; else echo 'bazzite-nvidia-open:stable'; fi"
+        },
+        {
+            "type": "kernel",
+            "key": "Kernel",
+            "format": "{1} {2} (Arrow Lake-S Native)"
+        },
+        {
+            "type": "host",
+            "key": "Host"
+        },
+        {
+            "type": "uptime",
+            "key": "Uptime"
+        },
+        {
+            "type": "packages",
+            "key": "Packages"
+        },
+        {
+            "type": "shell",
+            "key": "Shell"
+        },
+        {
+            "type": "display",
+            "key": "Display"
+        },
+        {
+            "type": "de",
+            "key": "DE"
+        },
+        {
+            "type": "wm",
+            "key": "WM"
+        },
+        {
+            "type": "cpu",
+            "key": "CPU"
+        },
+        {
+            "type": "gpu",
+            "key": "GPU"
+        },
+        {
+            "type": "memory",
+            "key": "Memory"
+        },
+        {
+            "type": "swap",
+            "key": "Swap"
+        },
+        {
+            "type": "disk",
+            "key": "Disk (/)",
+            "folders": "/"
+        },
+        "break",
+        "colors"
+    ]
+}
