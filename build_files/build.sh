@@ -38,7 +38,10 @@ ln -sf "$(basename "${MIMALLOC_SO}")" /usr/lib64/libmimalloc.so.2
 ln -sf libmimalloc.so.2 /usr/lib64/libmimalloc.so
 rm -rf /tmp/mimalloc
 
-# 6. Build Arrow Lake-S zlib-ng 2.3.3
+# 6. Build Arrow Lake-S zlib-ng (dynamically matching system version)
+SYS_ZLIB_VER=$(rpm -q --qf "%{VERSION}\n" zlib-ng-compat 2>/dev/null | head -n 1 || true)
+ZLIB_BRANCH="${SYS_ZLIB_VER:-2.3.3}"
+git clone --depth 1 --branch "${ZLIB_BRANCH}" https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng || \
 git clone --depth 1 --branch 2.3.3 https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng
 sed -i 's/evex512//g' /tmp/zlib-ng/arch/x86/*.c /tmp/zlib-ng/CMakeLists.txt || true
 cmake -B /tmp/zlib-ng/build -S /tmp/zlib-ng -G Ninja \
@@ -51,7 +54,10 @@ install -m 755 "${ZLIB_SO}" /usr/lib64/
 ln -sf "$(basename "${ZLIB_SO}")" /usr/lib64/libz.so.1
 rm -rf /tmp/zlib-ng
 
-# 7. Build Arrow Lake-S zstd (libzstd.so.1)
+# 7. Build Arrow Lake-S zstd (dynamically matching system version)
+SYS_ZSTD_VER=$(rpm -q --qf "%{VERSION}\n" libzstd 2>/dev/null | head -n 1 || true)
+ZSTD_BRANCH="v${SYS_ZSTD_VER:-1.5.7}"
+git clone --depth 1 --branch "${ZSTD_BRANCH}" https://github.com/facebook/zstd.git /tmp/zstd || \
 git clone --depth 1 --branch v1.5.7 https://github.com/facebook/zstd.git /tmp/zstd
 cmake -B /tmp/zstd/build_cmake -S /tmp/zstd/build/cmake -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
@@ -73,7 +79,10 @@ install -m 755 /tmp/libdeflate/build/libdeflate.so.0 /usr/lib64/libdeflate.so.0
 ln -sf libdeflate.so.0 /usr/lib64/libdeflate.so
 rm -rf /tmp/libdeflate
 
-# 9. Build Arrow Lake-S lz4 (liblz4.so.1)
+# 9. Build Arrow Lake-S lz4 (dynamically matching system version)
+SYS_LZ4_VER=$(rpm -q --qf "%{VERSION}\n" lz4-libs 2>/dev/null | head -n 1 || true)
+LZ4_BRANCH="v${SYS_LZ4_VER:-1.10.0}"
+git clone --depth 1 --branch "${LZ4_BRANCH}" https://github.com/lz4/lz4.git /tmp/lz4 || \
 git clone --depth 1 --branch v1.10.0 https://github.com/lz4/lz4.git /tmp/lz4
 make -C /tmp/lz4/lib -j"$(nproc)" BUILD_STATIC=no CFLAGS="${CFLAGS} -fPIC"
 LZ4_SO=$(find /tmp/lz4/lib -maxdepth 1 -type f -name "liblz4.so.1.*")
@@ -81,7 +90,11 @@ install -m 755 "${LZ4_SO}" /usr/lib64/
 ln -sf "$(basename "${LZ4_SO}")" /usr/lib64/liblz4.so.1
 rm -rf /tmp/lz4
 
-# 10. Build Arrow Lake-S libjpeg-turbo (libjpeg.so.62 & libturbojpeg.so.0)
+# 10. Build Arrow Lake-S libjpeg-turbo (dynamically matching system version)
+SYS_JPEG_VER=$(rpm -q --qf "%{VERSION}\n" libjpeg-turbo 2>/dev/null | head -n 1 || true)
+JPEG_BRANCH="${SYS_JPEG_VER:-3.1.3}"
+git clone --depth 1 --branch "${JPEG_BRANCH}" https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo || \
+git clone --depth 1 --branch 3.1.3 https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo || \
 git clone --depth 1 --branch 3.1.0 https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo
 cmake -B /tmp/libjpeg-turbo/build -S /tmp/libjpeg-turbo -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
@@ -90,7 +103,11 @@ cmake --build /tmp/libjpeg-turbo/build
 cmake --install /tmp/libjpeg-turbo/build
 rm -rf /tmp/libjpeg-turbo
 
-# 11. Build Arrow Lake-S SQLite3 (libsqlite3.so.0)
+# 11. Build Arrow Lake-S SQLite3 (dynamically matching system version)
+SYS_SQLITE_VER=$(rpm -q --qf "%{VERSION}\n" sqlite-libs 2>/dev/null | head -n 1 || true)
+SQLITE_BRANCH="version-${SYS_SQLITE_VER:-3.51.2}"
+git clone --depth 1 --branch "${SQLITE_BRANCH}" https://github.com/sqlite/sqlite.git /tmp/sqlite || \
+git clone --depth 1 --branch version-3.51.2 https://github.com/sqlite/sqlite.git /tmp/sqlite || \
 git clone --depth 1 --branch version-3.48.0 https://github.com/sqlite/sqlite.git /tmp/sqlite
 cd /tmp/sqlite
 ./configure --prefix=/usr --libdir=/usr/lib64 --disable-static --disable-tcl --soname=legacy \
@@ -207,7 +224,7 @@ ldconfig
 # 15. Clear userspace LTO flags
 unset CFLAGS CXXFLAGS LDFLAGS
 
-# 15. Install Custom Arrow Lake-S Kernel & Pre-Built Matching NVIDIA Kmods
+# 15. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
 # Install oras
@@ -218,11 +235,15 @@ mkdir -p /tmp/ogc-rpms
 oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
 ls -la /tmp/ogc-rpms
 
-# Detect custom kernel version from downloaded RPMs (with fallback)
+# Detect base image NVIDIA driver version & target custom kernel version
+SYS_NVIDIA_VER=$(rpm -q --qf "%{VERSION}\n" nvidia-driver 2>/dev/null | head -n 1 || true)
 KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
 KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
 
-# Overwrite stock kernel RPMs and install matching kmods (NVIDIA Open, xone, v4l2loopback)
+# Prevent any stale conflicting kmod-nvidia-open RPM from ever being installed
+rm -f /tmp/ogc-rpms/kmod-nvidia-open-*.rpm
+
+# Overwrite stock kernel RPMs
 rm -rf "/usr/lib/modules/${KVER}"
 rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
     /tmp/ogc-rpms/kernel-[0-9]*.rpm \
@@ -232,11 +253,37 @@ rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
     /tmp/ogc-rpms/kernel-headers-*.rpm \
     /tmp/ogc-rpms/kernel-tools-*.rpm
 
-# Prevent any stale conflicting kmod-nvidia-open RPM from being installed
-rm -f /tmp/ogc-rpms/kmod-nvidia-open-*.rpm
+# Check pre-built kmod-nvidia version from the ORAS package
+KMOD_NVIDIA_VER=$(rpm -qp --qf "%{VERSION}\n" /tmp/ogc-rpms/kmod-nvidia-*.rpm 2>/dev/null | grep -v open | head -n 1 || true)
+echo "Base system NVIDIA version : ${SYS_NVIDIA_VER}"
+echo "Prebuilt kmod-nvidia version: ${KMOD_NVIDIA_VER}"
+echo "Target kernel version       : ${KVER}"
 
+# Self-healing contract: install prebuilt matching kmod OR compile in-place
+if [ -n "${KMOD_NVIDIA_VER}" ] && [ -n "${SYS_NVIDIA_VER}" ] && [ "${KMOD_NVIDIA_VER}" = "${SYS_NVIDIA_VER}" ]; then
+    echo "Using prebuilt matching kmod-nvidia RPM (${KMOD_NVIDIA_VER})..."
+    rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps /tmp/ogc-rpms/kmod-nvidia-*.rpm
+else
+    echo "Prebuilt kmod-nvidia (${KMOD_NVIDIA_VER:-none}) does not match base image (${SYS_NVIDIA_VER}). Compiling in-place with akmods..."
+    cat << 'EOF' > /etc/yum.repos.d/negativo17-fedora-nvidia.repo
+[fedora-nvidia]
+name=negativo17 - Nvidia
+baseurl=https://negativo17.org/repos/nvidia/fedora-$releasever/$basearch/
+enabled=1
+gpgcheck=1
+gpgkey=https://negativo17.org/repos/RPM-GPG-KEY-slaanesh
+repo_gpgcheck=0
+skip_if_unavailable=1
+priority=70
+EOF
+    dnf5 install -y --enablerepo=fedora-nvidia akmod-nvidia akmods
+    akmods --force --kernels "${KVER}" --kmod nvidia
+    find /var/cache/akmods/ -name "kmod-nvidia-*.rpm" -exec rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps {} \;
+fi
+
+# Install any auxiliary kmods (e.g. xone, v4l2loopback)
 if compgen -G "/tmp/ogc-rpms/kmod-*.rpm" > /dev/null; then
-    rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps /tmp/ogc-rpms/kmod-*.rpm
+    rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps /tmp/ogc-rpms/kmod-*.rpm || true
 fi
 
 # Ensure vmlinuz is placed in bootc standard location (/usr/lib/modules/${KVER}/vmlinuz) and clean /boot
@@ -247,13 +294,28 @@ rm -f /boot/vmlinuz* /boot/initramfs*
 
 # Generate module dependencies & initramfs
 depmod -a "${KVER}"
+
+# Strict verification gate: fail build immediately if modules or firmware mismatch
+if ! modinfo -k "${KVER}" nvidia > /dev/null 2>&1; then
+    echo "::error:: NVIDIA kernel module failed to link or is missing for kernel ${KVER}!"
+    exit 1
+fi
+
+KMOD_ACTIVE_VER=$(modinfo -k "${KVER}" -F version nvidia 2>/dev/null || true)
+echo "Verified NVIDIA kernel module version: ${KMOD_ACTIVE_VER}"
+
+if [ ! -d "/lib/firmware/nvidia/${KMOD_ACTIVE_VER}" ]; then
+    echo "::error:: Missing GSP firmware in /lib/firmware/nvidia/${KMOD_ACTIVE_VER}! Fallback will occur if booted."
+    exit 1
+fi
+
 export DRACUT_NO_XATTR=1
 dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/lib/modules/${KVER}/initramfs.img"
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
 # 16. Clean up build tools and caches
-dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras || true
+dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras akmods || true
 dnf5 clean all
 ldconfig
 

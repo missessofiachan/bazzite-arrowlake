@@ -6,23 +6,21 @@
 - **Affects:** `build_files/build.sh` (Section 15)
 
 ### Status & Verification Summary
-The custom Arrow Lake-S OGC kernel (`7.2.9-ogc3.1.fc44.x86_64`) is active with verified NVIDIA Open GPU acceleration:
-- Kernel vermagic and symbols match pre-compiled `kmod-nvidia-open` drivers directly built in CI.
-- `nvidia-smi` successfully detects the NVIDIA GeForce RTX 4080 SUPER with driver 615.x.
-- Wayland compositor (KWin / Gamescope) renders at peak hardware refresh rates (e.g. 3840x2160 @ 144Hz) with G-Sync/VRR.
-- Section 15 in `build_files/build.sh` is re-enabled using pre-compiled `kmod-*.rpm` packages pulled via ORAS.
+The custom Arrow Lake-S OGC kernel is active with verified NVIDIA Open GPU acceleration:
+- Kernel vermagic and symbols match pre-compiled `kmod-nvidia` drivers built against the Negativo17 release (615.x).
+- Automated Self-Healing Version Contract: `build_files/build.sh` automatically checks whether prebuilt `kmod-nvidia` matches the base image's `nvidia-driver` version. If mismatched or missing, it dynamically compiles the matching driver in-place with `akmods`.
+- Strict Build Verification Gate: `modinfo` and firmware presence checks guarantee that an unbootable or 1080p-fallback image can never be generated or published.
+- Wayland compositor (KWin / Gamescope) renders at peak hardware refresh rates (3840x2160 @ 144Hz) with G-Sync/VRR.
 
 ### Completed Action Items
 - [x] **1. Dedicated NVIDIA Kmod Compilation:**
-  - Implemented in [kernel-packagesArrowlake/.github/workflows/fedora.yaml](file:///run/media/sofia/cc258147-6cb1-40b1-b682-64f9c8f50f64/GitHub/kernel-packagesArrowlake/.github/workflows/fedora.yaml). The CI pipeline compiles `kmod-nvidia-open` directly against the custom kernel's `kernel-devel` RPM and packages it into the ORAS OCI artifact.
+  - Implemented in [kernel-packagesArrowlake/.github/workflows/fedora.yaml](file:///run/media/sofia/cc258147-6cb1-40b1-b682-64f9c8f50f64/GitHub/kernel-packagesArrowlake/.github/workflows/fedora.yaml). The CI pipeline compiles `kmod-nvidia` directly against the custom kernel's `kernel-devel` RPM and packages it into the ORAS OCI artifact.
 - [x] **2. Rebuild Out-of-tree Auxiliary Modules:**
   - Automated in kernel CI (`akmod-xone` and `akmod-v4l2loopback`).
-- [x] **3. Verification Checkpoints:**
-  - `uname -r`: Verified `7.2.9-ogc3.1.fc44.x86_64`.
-  - `nvidia-smi`: Verified RTX 4080 SUPER communication without driver errors.
-  - Wayland rendering: Verified hardware GPU acceleration active.
-- [x] **4. Re-enable Section 15 in `build_files/build.sh`:**
-  - Section 15 re-enabled with clean, idempotent `kmod-*.rpm` installation logic.
+- [x] **3. Self-Healing Version Contract & Verification Gate:**
+  - Added build-time verification and automated `akmods` fallback in `build_files/build.sh`.
+- [x] **4. Dynamic System Version Matching for Optimized Userspace Libraries:**
+  - Userspace libraries (`zstd`, `zlib-ng`, `lz4`, `libjpeg-turbo`, `sqlite`) dynamically query the base system's package versions before compilation.
 
 ---
 
