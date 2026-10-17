@@ -232,6 +232,9 @@ rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps \
     /tmp/ogc-rpms/kernel-headers-*.rpm \
     /tmp/ogc-rpms/kernel-tools-*.rpm
 
+# Prevent any stale conflicting kmod-nvidia-open RPM from being installed
+rm -f /tmp/ogc-rpms/kmod-nvidia-open-*.rpm
+
 if compgen -G "/tmp/ogc-rpms/kmod-*.rpm" > /dev/null; then
     rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps /tmp/ogc-rpms/kmod-*.rpm
 fi
