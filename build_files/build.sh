@@ -226,25 +226,19 @@ git clone --depth 1 --branch "${XXHASH_BRANCH}" https://github.com/Cyan4973/xxHa
 git clone --depth 1 --branch v0.8.4 https://github.com/Cyan4973/xxHash.git /tmp/xxhash || \
 git clone --depth 1 https://github.com/Cyan4973/xxHash.git /tmp/xxhash
 make -C /tmp/xxhash -j"$(nproc)" CFLAGS="${CFLAGS} -fPIC"
-XXHASH_SO=$(find /tmp/xxhash -maxdepth 1 -type f -name "libxxhash.so.0.*")
-install -m 755 "${XXHASH_SO}" /usr/lib64/
-ln -sf "$(basename "${XXHASH_SO}")" /usr/lib64/libxxhash.so.0
-ln -sf libxxhash.so.0 /usr/lib64/libxxhash.so
+make -C /tmp/xxhash install PREFIX=/usr LIBDIR=/usr/lib64
 rm -rf /tmp/xxhash
 
 # 16. Build Arrow Lake-S Vulkan Loader (libvulkan.so.1)
 SYS_VK_VER=$(rpm -q --qf "%{VERSION}\n" vulkan-loader.x86_64 2>/dev/null | head -n 1 || true)
-VK_TAG="v${SYS_VK_VER:-1.4.341.0}"
+VK_TAG="vulkan-sdk-${SYS_VK_VER:-1.4.341.0}"
 git clone --depth 1 --branch "${VK_TAG}" https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader || \
 git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader
 cmake -B /tmp/vulkan-loader/build -S /tmp/vulkan-loader -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF
 cmake --build /tmp/vulkan-loader/build
-VK_SO=$(find /tmp/vulkan-loader/build/loader -maxdepth 1 -type f -name "libvulkan.so.1.*")
-install -m 755 "${VK_SO}" /usr/lib64/
-ln -sf "$(basename "${VK_SO}")" /usr/lib64/libvulkan.so.1
-ln -sf libvulkan.so.1 /usr/lib64/libvulkan.so
+cmake --install /tmp/vulkan-loader/build
 rm -rf /tmp/vulkan-loader
 
 # 17. Build Arrow Lake-S Sched-Ext Schedulers (scx_bpfland, scx_lavd, scx_rusty)
