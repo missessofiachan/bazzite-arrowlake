@@ -8,23 +8,26 @@ Custom, high-performance [bootc](https://github.com/bootc-dev/bootc) image based
 
 ## ⚡ Key Highlights & Optimizations
 
-### 1. Custom Arrow Lake-S Kernel & Rebuilt Drivers
+### 1. Custom Arrow Lake-S Kernel & Self-Healing NVIDIA Driver Contract
 > [!NOTE]
-> **Status:** ✅ Active & Verified. Running custom Arrow Lake-S OGC kernel (`7.2.9-ogc3.x`) with pre-compiled matching NVIDIA Open drivers (`kmod-nvidia-open`) and full hardware acceleration.
+> **Status:** ✅ Active & Verified. Running custom Arrow Lake-S OGC kernel (`7.2.9-ogc3.x`) with matching NVIDIA drivers (`kmod-nvidia`) and full hardware acceleration.
 
 - **Kernel:** Incorporates customized, optimized OGC kernel RPMs built specifically with `-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe` from [missessofiachan/kernel-packagesArrowlake](https://github.com/missessofiachan/kernel-packagesArrowlake).
-- **Nvidia Open Kernel Modules:** Automatically bundles pre-compiled NVIDIA Open GPU drivers (`kmod-nvidia-open`) and auxiliary modules (`xone`, `v4l2loopback`) matching the custom kernel release with full Wayland, NVENC, and G-Sync/VRR support.
+- **Self-Healing NVIDIA Version Contract:** `build.sh` dynamically verifies that `kmod-nvidia` matches the exact driver version in Bazzite's base image (`615.x`). If a pre-built kmod matches, it installs in seconds; if mismatched or missing, it dynamically compiles the matching driver in-place with `akmods`.
+- **Strict Build Verification Gate:** `modinfo` vermagic and GSP firmware presence checks guarantee that an unbootable or 1080p-fallback image can never be built or pushed.
 - **Bootc-Compliant Initramfs:** Reproducible Dracut initramfs rebuilt against the custom kernel with OSTree support and hardware-tuned compression tools.
 
 ### 2. High-Performance Arrow Lake Userspace Toolchain
-Key system allocators, math routines, databases, security crypto, and compression libraries are built natively for `arrowlake-s` with aggressive optimizations (`-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0`):
+Key system allocators, math routines, graphics dispatchers, schedulers, and compression libraries are built natively for `arrowlake-s` with aggressive optimizations (`-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0`), dynamically matching base system RPM versions:
 - **jemalloc 5.3.0 & mimalloc 2.1.7:** Low-overhead, high-throughput multi-threaded memory allocators for gaming and heavy workloads.
-- **zlib-ng 2.3.3:** Accelerated deflate implementation tuned for Arrow Lake architecture without AVX-512 extensions.
-- **zstd 1.5.7, libdeflate & lz4 1.10.0:** Native compression and decompression binaries and shared libraries for rapid asset and disk streaming.
-- **libjpeg-turbo 3.1.0:** SIMD/AVX2 accelerated texture and 2D image decoding for fast UI overlays and in-game asset streaming.
-- **SQLite3 3.48.0:** Natively compiled with memory optimizations and fast table indexing (`-DSQLITE_ENABLE_MEMSYS5`, `-DSQLITE_ENABLE_FTS5`, `-DSQLITE_ENABLE_RTREE`) for Steam, browser, and local game cache operations.
+- **Vulkan Loader (`libvulkan.so.1`):** Native Arrow Lake-S build with LTO to minimize trampoline indirection and function pointer dispatch latency between Wine/Proton/DXVK and the NVIDIA driver across millions of draw calls per second.
+- **xxHash (`libxxhash.so.0`):** Native Arrow Lake-S build with AVX2 & BMI2 acceleration for DXVK pipeline cache lookups, graphics driver state tracking, and Btrfs deduplication (`bees`).
+- **`scx` Sched-Ext Schedulers (`scx_bpfland`, `scx_lavd`, `scx_rusty`):** Compiled with `RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3"` for tailored hybrid thread scheduling across Lion Cove P-cores (1T) and Skymont E-cores (1T).
+- **zlib-ng (dynamic matching):** Accelerated deflate implementation tuned for Arrow Lake architecture without AVX-512 extensions.
+- **zstd, libdeflate & lz4 (dynamic matching):** Native compression and decompression binaries and shared libraries for rapid asset and disk streaming.
+- **libjpeg-turbo (dynamic matching):** SIMD/AVX2 accelerated texture and 2D image decoding for fast UI overlays and in-game asset streaming.
+- **SQLite3 (dynamic matching):** Natively compiled with memory optimizations and fast table indexing (`-DSQLITE_ENABLE_MEMSYS5`, `-DSQLITE_ENABLE_FTS5`, `-DSQLITE_ENABLE_RTREE`) for Steam, browser, and local game cache operations.
 - **SLEEF 3.6.1:** Hardware-vectorized SIMD math library (`libsleef.so.3`) tuned for AVX2 + FMA for physics, shaders, and gaming audio pipelines.
-- **OpenSSL (`libcrypto.so.3` & `libssl.so.3`):** *(Temporarily on hold for system utility compatibility; see [TODO.md](TODO.md))* Stock OpenSSL with native dynamic CPU acceleration (VAES/SHA-NI) remains active.
 - **FastMem Primitives (`libfastmem.so`):** Native AVX2 256-bit vectorized `memcpy` & `memset` preload library tailored for Arrow Lake's high L2 cache bandwidth.
 - **Steam & Game Launch Wrappers:** Convenient drop-in CLI launchers (`run-jemalloc %command%`, `run-mimalloc %command%`, `run-fastmem %command%`) to instantly preload Arrow Lake-optimized allocators into Steam games.
 
@@ -38,7 +41,7 @@ Optimized for ultra-low latency, real-time audio/input responsiveness, and peak 
 - `usbcore.autosuspend=-1` to prevent latency spikes and disconnects on USB peripherals.
 
 ### 4. System & Subsystem Customizations
-- **Sched-ext (`scx_loader`):** Enabled for pluggable userspace/eBPF gaming schedulers with low-latency 500µs pinned time slices (`scx_lavd`).
+- **Sched-ext (`scx_loader`):** Enabled for pluggable userspace/eBPF gaming schedulers with native Arrow Lake-S compiled binaries (`scx_bpfland`, `scx_lavd`, `scx_rusty`).
 - **NVIDIA GPU Tuning:** Low-latency environment variables, G-Sync / VRR flags on Wayland, and module options (`99-nvidia-gaming.conf`, `99-nvidia-custom.conf`).
 - **I/O & Sysctl:** NVMe/SSD gaming queue scheduler rules (`60-iosched-gaming.rules`), boosted inotify watchers for IDEs, and virtual memory responsiveness tweaks (`99-bazzite-arrowlake.conf`).
 - **Pro Audio:** PipeWire latency and quantum settings optimized for gaming audio (`99-gaming-audio.conf`).
