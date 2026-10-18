@@ -123,7 +123,10 @@ export CMAKE_CXX_COMPILER_LAUNCHER=ccache
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -fno-semantic-interposition -fomit-frame-pointer -momit-leaf-frame-pointer -fdata-sections -ffunction-sections -pipe -g0"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-Wl,-O3 -Wl,--as-needed -Wl,-Bsymbolic-functions -Wl,--gc-sections -flto=auto -Wl,-s"
-export RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C codegen-units=1 -C strip=symbols -C lto=thin -C embed-bitcode=yes"
+export RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C strip=symbols"
+export CARGO_PROFILE_RELEASE_LTO="thin"
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="1"
+export CARGO_PROFILE_RELEASE_STRIP="symbols"
 
 # 4. Build Arrow Lake-S jemalloc (dynamically matching system or latest upstream)
 SYS_JEMALLOC_VER=$(get_rpm_ver jemalloc)
@@ -485,7 +488,7 @@ fi
 clone_dynamic "https://github.com/KhronosGroup/Vulkan-Loader.git" "/tmp/vulkan-loader" "${VK_TAG}" "^(v|vulkan-sdk-)[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$"
 cmake -B /tmp/vulkan-loader/build -S /tmp/vulkan-loader -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF
+  -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF
 cmake --build /tmp/vulkan-loader/build
 cmake --install /tmp/vulkan-loader/build
 rm -rf /tmp/vulkan-loader
@@ -502,7 +505,7 @@ for sched in scx_bpfland scx_lavd scx_rusty; do
   fi
 done
 rm -rf /tmp/scx
-unset RUSTFLAGS CARGO_HOME CARGO_TARGET_DIR
+unset RUSTFLAGS CARGO_HOME CARGO_TARGET_DIR CARGO_PROFILE_RELEASE_LTO CARGO_PROFILE_RELEASE_CODEGEN_UNITS CARGO_PROFILE_RELEASE_STRIP
 
 # 18. Build Arrow Lake-S FreeType (libfreetype.so.6) & HarfBuzz (libharfbuzz.so.0)
 SYS_FREETYPE_VER=$(get_rpm_ver freetype)
