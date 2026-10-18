@@ -169,7 +169,7 @@ SYS_ZSTD_VER=$(get_rpm_ver libzstd zstd)
 clone_dynamic "https://github.com/facebook/zstd.git" "/tmp/zstd" "${SYS_ZSTD_VER:+v${SYS_ZSTD_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/zstd/build_cmake -S /tmp/zstd/build/cmake -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=ON -DZSTD_BUILD_TESTS=OFF
+  -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=ON -DZSTD_PROGRAMS_LINK_SHARED=ON -DZSTD_BUILD_TESTS=OFF
 cmake --build /tmp/zstd/build_cmake
 cmake --install /tmp/zstd/build_cmake
 rm -rf /tmp/zstd
