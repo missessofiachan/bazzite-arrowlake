@@ -123,7 +123,7 @@ export CMAKE_CXX_COMPILER_LAUNCHER=ccache
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -fno-semantic-interposition -fomit-frame-pointer -momit-leaf-frame-pointer -fdata-sections -ffunction-sections -pipe -g0"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-Wl,-O3 -Wl,--as-needed -Wl,-Bsymbolic-functions -Wl,--gc-sections -flto=auto -Wl,-s"
-export RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C strip=symbols"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C strip=symbols"
 export CARGO_PROFILE_RELEASE_LTO="thin"
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="1"
 export CARGO_PROFILE_RELEASE_STRIP="symbols"
@@ -496,16 +496,20 @@ rm -rf /tmp/vulkan-loader
 # 17. Build Arrow Lake-S Sched-Ext Schedulers (scx_bpfland, scx_lavd, scx_rusty)
 SYS_SCX_VER=$(get_rpm_ver scx-scheds scx-scheds-git)
 clone_dynamic "https://github.com/sched-ext/scx.git" "/tmp/scx" "${SYS_SCX_VER:+v${SYS_SCX_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
-cargo build --release --manifest-path /tmp/scx/Cargo.toml -p scx_bpfland -p scx_lavd -p scx_rusty
+env -u CFLAGS -u CXXFLAGS -u LDFLAGS \
+  cargo build --release --target x86_64-unknown-linux-gnu \
+  --manifest-path /tmp/scx/Cargo.toml -p scx_bpfland -p scx_lavd -p scx_rusty
 for sched in scx_bpfland scx_lavd scx_rusty; do
-  if [ -f "${CARGO_TARGET_DIR}/release/${sched}" ]; then
+  if [ -f "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/${sched}" ]; then
+    install -m 755 "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/${sched}" "/usr/bin/${sched}"
+  elif [ -f "${CARGO_TARGET_DIR}/release/${sched}" ]; then
     install -m 755 "${CARGO_TARGET_DIR}/release/${sched}" "/usr/bin/${sched}"
-  elif [ -f "/tmp/scx/target/release/${sched}" ]; then
-    install -m 755 "/tmp/scx/target/release/${sched}" "/usr/bin/${sched}"
+  elif [ -f "/tmp/scx/target/x86_64-unknown-linux-gnu/release/${sched}" ]; then
+    install -m 755 "/tmp/scx/target/x86_64-unknown-linux-gnu/release/${sched}" "/usr/bin/${sched}"
   fi
 done
 rm -rf /tmp/scx
-unset RUSTFLAGS CARGO_HOME CARGO_TARGET_DIR CARGO_PROFILE_RELEASE_LTO CARGO_PROFILE_RELEASE_CODEGEN_UNITS CARGO_PROFILE_RELEASE_STRIP
+unset CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CARGO_HOME CARGO_TARGET_DIR CARGO_PROFILE_RELEASE_LTO CARGO_PROFILE_RELEASE_CODEGEN_UNITS CARGO_PROFILE_RELEASE_STRIP
 
 # 18. Build Arrow Lake-S FreeType (libfreetype.so.6) & HarfBuzz (libharfbuzz.so.0)
 SYS_FREETYPE_VER=$(get_rpm_ver freetype)
