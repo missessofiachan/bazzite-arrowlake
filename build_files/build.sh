@@ -9,13 +9,14 @@ cp -rv /ctx/system_files/* /
 rm -f /usr/share/ublue-os/image-template-check
 
 # 2. Install temporary compiler toolchain
-dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel
-# (Kernel module build deps 'elfutils-libelf-devel akmods' disabled while custom kernel is on hold)
+dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel \
+    vulkan-headers clang bpftool libbpf-devel elfutils-libelf-devel rust cargo
 
-# 3. Arrow Lake-S optimization flags (Userspace Libraries)
+# 3. Arrow Lake-S optimization flags (Userspace Libraries & Rust)
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-Wl,-O3 -Wl,--as-needed -flto=auto -Wl,-s"
+export RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C codegen-units=1"
 
 # 4. Build Arrow Lake-S jemalloc (libjemalloc.so.2)
 git clone --depth 1 --branch 5.3.0 https://github.com/jemalloc/jemalloc.git /tmp/jemalloc
@@ -218,13 +219,56 @@ gcc -O3 -march=arrowlake-s -mtune=arrowlake-s -fPIC -shared -fno-builtin-memcpy 
   -Wl,-O3 -Wl,-s /tmp/fastmem/fastmem.c -o /usr/lib64/libfastmem.so
 rm -rf /tmp/fastmem
 
+# 15. Build Arrow Lake-S xxHash (libxxhash.so.0)
+SYS_XXHASH_VER=$(rpm -q --qf "%{VERSION}\n" xxhash-libs 2>/dev/null | head -n 1 || true)
+XXHASH_BRANCH="v${SYS_XXHASH_VER:-0.8.4}"
+git clone --depth 1 --branch "${XXHASH_BRANCH}" https://github.com/Cyan4973/xxHash.git /tmp/xxhash || \
+git clone --depth 1 --branch v0.8.4 https://github.com/Cyan4973/xxHash.git /tmp/xxhash || \
+git clone --depth 1 https://github.com/Cyan4973/xxHash.git /tmp/xxhash
+make -C /tmp/xxhash -j"$(nproc)" CFLAGS="${CFLAGS} -fPIC"
+XXHASH_SO=$(find /tmp/xxhash -maxdepth 1 -type f -name "libxxhash.so.0.*")
+install -m 755 "${XXHASH_SO}" /usr/lib64/
+ln -sf "$(basename "${XXHASH_SO}")" /usr/lib64/libxxhash.so.0
+ln -sf libxxhash.so.0 /usr/lib64/libxxhash.so
+rm -rf /tmp/xxhash
+
+# 16. Build Arrow Lake-S Vulkan Loader (libvulkan.so.1)
+SYS_VK_VER=$(rpm -q --qf "%{VERSION}\n" vulkan-loader.x86_64 2>/dev/null | head -n 1 || true)
+VK_TAG="v${SYS_VK_VER:-1.4.341.0}"
+git clone --depth 1 --branch "${VK_TAG}" https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader || \
+git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader
+cmake -B /tmp/vulkan-loader/build -S /tmp/vulkan-loader -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
+  -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF
+cmake --build /tmp/vulkan-loader/build
+VK_SO=$(find /tmp/vulkan-loader/build/loader -maxdepth 1 -type f -name "libvulkan.so.1.*")
+install -m 755 "${VK_SO}" /usr/lib64/
+ln -sf "$(basename "${VK_SO}")" /usr/lib64/libvulkan.so.1
+ln -sf libvulkan.so.1 /usr/lib64/libvulkan.so
+rm -rf /tmp/vulkan-loader
+
+# 17. Build Arrow Lake-S Sched-Ext Schedulers (scx_bpfland, scx_lavd, scx_rusty)
+SYS_SCX_VER=$(rpm -q --qf "%{VERSION}\n" scx-scheds 2>/dev/null | head -n 1 || true)
+SCX_TAG="v${SYS_SCX_VER:-1.1.4}"
+git clone --depth 1 --branch "${SCX_TAG}" https://github.com/sched-ext/scx.git /tmp/scx || \
+git clone --depth 1 --branch v1.1.4 https://github.com/sched-ext/scx.git /tmp/scx || \
+git clone --depth 1 https://github.com/sched-ext/scx.git /tmp/scx
+cargo build --release --manifest-path /tmp/scx/Cargo.toml -p scx_bpfland -p scx_lavd -p scx_rusty
+for sched in scx_bpfland scx_lavd scx_rusty; do
+  if [ -f "/tmp/scx/target/release/${sched}" ]; then
+    install -m 755 "/tmp/scx/target/release/${sched}" "/usr/bin/${sched}"
+  fi
+done
+rm -rf /tmp/scx /root/.cargo /tmp/cargo-home
+unset RUSTFLAGS
+
 # Refresh shared library cache
 ldconfig
 
-# 15. Clear userspace LTO flags
+# 18. Clear userspace LTO flags
 unset CFLAGS CXXFLAGS LDFLAGS
 
-# 15. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
+# 18. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
 # Install oras
@@ -314,22 +358,23 @@ dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/li
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
-# 16. Clean up build tools and caches
-dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras akmods || true
+# 19. Clean up build tools and caches
+dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras akmods \
+    clang bpftool libbpf-devel rust cargo vulkan-headers || true
 dnf5 clean all
 ldconfig
 
-# 17. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
+# 20. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
 # In OSTree/bootc base images, /opt is initially a symlink to /var/opt (which does not exist).
 # Standard Universal Blue practice: convert /opt to an immutable directory in / so RPMs and binaries install cleanly.
 rm -f /opt && mkdir -p /opt
 
-# 17a. Mullvad VPN (Client, CLI & systemd daemon)
+# 20a. Mullvad VPN (Client, CLI & systemd daemon)
 dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
 dnf5 install -y mullvad-vpn
 dnf5 clean all
 
-# 17b. Visual Studio Code
+# 20b. Visual Studio Code
 rpm --import https://packages.microsoft.com/keys/microsoft.asc
 cat << 'EOF' > /etc/yum.repos.d/vscode.repo
 [code]
@@ -342,7 +387,7 @@ EOF
 dnf5 install -y code
 dnf5 clean all
 
-# 17c. Google Antigravity GUI program
+# 20c. Google Antigravity GUI program
 mkdir -p /opt/antigravity
 curl -sSL "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz" | tar -xz -C /opt/antigravity --strip-components=1
 ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
@@ -382,7 +427,7 @@ EOF
 
 update-desktop-database /usr/share/applications || true
 
-# 18. Enable services
+# 21. Enable services
 systemctl enable scx_loader.service
 systemctl enable mullvad-daemon.service
 systemctl mask NetworkManager-wait-online.service

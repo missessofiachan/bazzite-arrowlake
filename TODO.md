@@ -47,3 +47,15 @@ Swapping it in-place during the container build requires careful handling:
 - [ ] Test in-place replacement in an isolated container test build.
 - [ ] Run test suite for downstream consumers (`curl`, `rpm`, `git`, `dnf5`) before finalizing.
 - [ ] Uncomment Section 13 in `build_files/build.sh`.
+
+---
+
+## 3. Tier 1 Performance Packages (xxHash, Vulkan-Loader, scx Schedulers)
+
+- **Status:** ✅ Integrated & Active
+- **Affects:** `build_files/build.sh` (Sections 15, 16, 17)
+
+### Highlights
+- **xxHash (`libxxhash.so.0`):** Native Arrow Lake-S build with AVX2 & BMI2 acceleration for DXVK pipeline cache lookups, graphics driver state tracking, and Btrfs deduplication (`bees`).
+- **Vulkan Loader (`libvulkan.so.1`):** Native `-O3 -march=arrowlake-s -flto=auto` build to reduce trampoline and function pointer dispatch overhead across millions of draw calls per second.
+- **`scx` Sched-Ext Schedulers (`scx_bpfland`, `scx_lavd`, `scx_rusty`):** Compiled with `RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3"` for tailored hybrid thread scheduling across Lion Cove P-cores (1T) and Skymont E-cores (1T).
