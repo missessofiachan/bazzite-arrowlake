@@ -4,20 +4,76 @@ set -ouex pipefail
 export HOME=/tmp
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
+# ==============================================================================
+# Dynamic Version & Tag Resolution Helpers
+# ==============================================================================
+# 1. Query installed RPM version cleanly (strips epochs/release suffixes)
+get_rpm_ver() {
+    rpm -q --qf "%{VERSION}\n" "$@" 2>/dev/null | grep -v "not installed" | head -n 1 | sed 's/[\^+~].*//' || true
+}
+
+# 2. Query the latest stable upstream Git tag matching a regex pattern
+get_latest_tag() {
+    local repo_url="$1"
+    local tag_regex="${2:-^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)*$}"
+    git ls-remote --tags --refs --sort=-v:refname "${repo_url}" 2>/dev/null \
+        | awk -F'refs/tags/' '{print $2}' \
+        | grep -E "${tag_regex}" \
+        | head -n 1 || true
+}
+
+# 3. Clone a repo trying: (1) RPM-matched tag, (2) Latest upstream release tag, (3) Default branch
+clone_dynamic() {
+    local repo_url="$1"
+    local dest_dir="$2"
+    local preferred_tag="$3"
+    local fallback_regex="${4:-^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)*$}"
+    shift 4
+    local extra_git_args=("$@")
+
+    rm -rf "${dest_dir}"
+    if [ -n "${preferred_tag}" ]; then
+        echo "--> Attempting clone of ${repo_url} at system-matched tag: ${preferred_tag}"
+        if git clone --depth 1 "${extra_git_args[@]}" --branch "${preferred_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    local latest_tag
+    latest_tag=$(get_latest_tag "${repo_url}" "${fallback_regex}")
+    if [ -n "${latest_tag}" ]; then
+        echo "--> Attempting clone of ${repo_url} at latest upstream tag: ${latest_tag}"
+        if git clone --depth 1 "${extra_git_args[@]}" --branch "${latest_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    echo "--> Falling back to default HEAD branch for ${repo_url}"
+    git clone --depth 1 "${extra_git_args[@]}" "${repo_url}" "${dest_dir}"
+}
+
 # 1. Copy baked-in system configs
 cp -rv /ctx/system_files/* /
 rm -f /usr/share/ublue-os/image-template-check
 
-# 2. Install temporary compiler toolchain
-dnf5 install -y gcc gcc-c++ make cmake ninja-build meson autoconf automake git bzip2 zlib-ng-compat-devel \
-    vulkan-headers clang bpftool libbpf-devel elfutils-libelf-devel rust cargo \
-    brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel \
-    libX11-devel libXdamage-devel libXcomposite-devel libXcursor-devel libXrender-devel \
-    libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel libXres-devel libXmu-devel \
-    libXi-devel libdrm-devel libeis-devel wayland-devel wayland-protocols-devel \
-    libxkbcommon-devel libcap-devel sdl2-compat-devel libavif-devel pixman-devel \
-    systemd-devel libdecor-devel luajit-devel libinput-devel pipewire-devel hwdata glslang \
-    spirv-headers-devel glm-devel libseat-devel lcms2-devel xorg-x11-server-Xwayland-devel
+# 2. Install temporary compiler toolchain (including libxcb-devel & xcb-util-* for Vulkan & Gamescope)
+BUILD_DEPS=(
+    gcc gcc-c++ make cmake ninja-build meson autoconf automake libtool pkgconf-pkg-config
+    git bzip2 curl jq
+    zlib-ng-compat-devel vulkan-headers clang bpftool libbpf-devel elfutils-libelf-devel
+    rust cargo brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel
+    libxcb-devel xcb-util-devel xcb-util-wm-devel xcb-util-image-devel
+    xcb-util-keysyms-devel xcb-util-renderutil-devel
+    libX11-devel libXrandr-devel libXdamage-devel libXcomposite-devel libXcursor-devel
+    libXrender-devel libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel
+    libXres-devel libXmu-devel libXi-devel libdrm-devel libeis-devel
+    wayland-devel wayland-protocols-devel libxkbcommon-devel libcap-devel
+    sdl2-compat-devel libavif-devel pixman-devel systemd-devel libdecor-devel
+    luajit-devel libinput-devel pipewire-devel hwdata glslang
+    spirv-headers-devel glm-devel libseat-devel lcms2-devel
+    xorg-x11-server-Xwayland-devel
+)
+dnf5 install -y "${BUILD_DEPS[@]}"
 
 export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
 
@@ -27,8 +83,9 @@ export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-Wl,-O3 -Wl,--as-needed -flto=auto -Wl,-s"
 export RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3 -C codegen-units=1"
 
-# 4. Build Arrow Lake-S jemalloc (libjemalloc.so.2)
-git clone --depth 1 --branch 5.3.0 https://github.com/jemalloc/jemalloc.git /tmp/jemalloc
+# 4. Build Arrow Lake-S jemalloc (dynamically matching system or latest upstream)
+SYS_JEMALLOC_VER=$(get_rpm_ver jemalloc)
+clone_dynamic "https://github.com/jemalloc/jemalloc.git" "/tmp/jemalloc" "${SYS_JEMALLOC_VER}" "^[0-9]+\.[0-9]+\.[0-9]+$"
 cd /tmp/jemalloc
 ./autogen.sh --prefix=/usr --libdir=/usr/lib64 --disable-stats --disable-cxx --disable-static --enable-autogen
 make -j"$(nproc)" build_lib_shared
@@ -36,76 +93,68 @@ install -m 755 lib/libjemalloc.so.2 /usr/lib64/libjemalloc.so.2
 ln -sf libjemalloc.so.2 /usr/lib64/libjemalloc.so
 cd / && rm -rf /tmp/jemalloc
 
-# 5. Build Arrow Lake-S mimalloc (libmimalloc.so.2)
-git clone --depth 1 --branch v2.1.7 https://github.com/microsoft/mimalloc.git /tmp/mimalloc
+# 5. Build Arrow Lake-S mimalloc (dynamically matching system or latest v2.x ABI)
+SYS_MIMALLOC_VER=$(get_rpm_ver mimalloc)
+clone_dynamic "https://github.com/microsoft/mimalloc.git" "/tmp/mimalloc" "${SYS_MIMALLOC_VER:+v${SYS_MIMALLOC_VER}}" "^v2\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/mimalloc/build -S /tmp/mimalloc -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DMI_BUILD_STATIC=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF -DMI_INSTALL_TOPLEVEL=ON
 cmake --build /tmp/mimalloc/build
-MIMALLOC_SO=$(find /tmp/mimalloc/build -maxdepth 1 -type f -name "libmimalloc.so.2.*")
+MIMALLOC_SO=$(find /tmp/mimalloc/build -maxdepth 1 -type f -name "libmimalloc.so.*.*" | head -n 1)
 install -m 755 "${MIMALLOC_SO}" /usr/lib64/
 ln -sf "$(basename "${MIMALLOC_SO}")" /usr/lib64/libmimalloc.so.2
 ln -sf libmimalloc.so.2 /usr/lib64/libmimalloc.so
 rm -rf /tmp/mimalloc
 
-# 6. Build Arrow Lake-S zlib-ng (dynamically matching system version)
-SYS_ZLIB_VER=$(rpm -q --qf "%{VERSION}\n" zlib-ng-compat 2>/dev/null | head -n 1 || true)
-ZLIB_BRANCH="${SYS_ZLIB_VER:-2.3.3}"
-git clone --depth 1 --branch "${ZLIB_BRANCH}" https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng || \
-git clone --depth 1 --branch 2.3.3 https://github.com/zlib-ng/zlib-ng.git /tmp/zlib-ng
+# 6. Build Arrow Lake-S zlib-ng (dynamically matching system or latest upstream)
+SYS_ZLIB_VER=$(get_rpm_ver zlib-ng-compat zlib-ng)
+clone_dynamic "https://github.com/zlib-ng/zlib-ng.git" "/tmp/zlib-ng" "${SYS_ZLIB_VER}" "^[0-9]+\.[0-9]+\.[0-9]+$"
 sed -i 's/evex512//g' /tmp/zlib-ng/arch/x86/*.c /tmp/zlib-ng/CMakeLists.txt || true
 cmake -B /tmp/zlib-ng/build -S /tmp/zlib-ng -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DWITH_GTEST=OFF -DWITH_NATIVE_INSTRUCTIONS=OFF \
   -DWITH_AVX512=OFF -DWITH_AVX512VNNI=OFF -DBUILD_SHARED_LIBS=ON
 cmake --build /tmp/zlib-ng/build
-ZLIB_SO=$(find /tmp/zlib-ng/build -maxdepth 1 -type f -name "libz.so.1.*")
+ZLIB_SO=$(find /tmp/zlib-ng/build -maxdepth 1 -type f -name "libz.so.1.*" | head -n 1)
 install -m 755 "${ZLIB_SO}" /usr/lib64/
 ln -sf "$(basename "${ZLIB_SO}")" /usr/lib64/libz.so.1
 rm -rf /tmp/zlib-ng
 
-# 7. Build Arrow Lake-S zstd (dynamically matching system version)
-SYS_ZSTD_VER=$(rpm -q --qf "%{VERSION}\n" libzstd 2>/dev/null | head -n 1 || true)
-ZSTD_BRANCH="v${SYS_ZSTD_VER:-1.5.7}"
-git clone --depth 1 --branch "${ZSTD_BRANCH}" https://github.com/facebook/zstd.git /tmp/zstd || \
-git clone --depth 1 --branch v1.5.7 https://github.com/facebook/zstd.git /tmp/zstd
+# 7. Build Arrow Lake-S zstd (dynamically matching system or latest upstream)
+SYS_ZSTD_VER=$(get_rpm_ver libzstd)
+clone_dynamic "https://github.com/facebook/zstd.git" "/tmp/zstd" "${SYS_ZSTD_VER:+v${SYS_ZSTD_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/zstd/build_cmake -S /tmp/zstd/build/cmake -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF
 cmake --build /tmp/zstd/build_cmake
-ZSTD_SO=$(find /tmp/zstd/build_cmake/lib -maxdepth 1 -type f -name "libzstd.so.1.*")
+ZSTD_SO=$(find /tmp/zstd/build_cmake/lib -maxdepth 1 -type f -name "libzstd.so.1.*" | head -n 1)
 install -m 755 "${ZSTD_SO}" /usr/lib64/
 ln -sf "$(basename "${ZSTD_SO}")" /usr/lib64/libzstd.so.1
 rm -rf /tmp/zstd
 
-# 8. Build Arrow Lake-S libdeflate (libdeflate.so.0)
-git clone --depth 1 https://github.com/ebiggers/libdeflate.git /tmp/libdeflate
-sed -i 's/,evex512//g; s/"evex512"/""/g' /tmp/libdeflate/lib/x86/*.h
+# 8. Build Arrow Lake-S libdeflate (dynamically matching system or latest upstream)
+SYS_DEFLATE_VER=$(get_rpm_ver libdeflate)
+clone_dynamic "https://github.com/ebiggers/libdeflate.git" "/tmp/libdeflate" "${SYS_DEFLATE_VER:+v${SYS_DEFLATE_VER}}" "^v[0-9]+\.[0-9]+$"
+sed -i 's/,evex512//g; s/"evex512"/""/g' /tmp/libdeflate/lib/x86/*.h || true
 cmake -B /tmp/libdeflate/build -S /tmp/libdeflate -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF
 cmake --build /tmp/libdeflate/build
-install -m 755 /tmp/libdeflate/build/libdeflate.so.0 /usr/lib64/libdeflate.so.0
-ln -sf libdeflate.so.0 /usr/lib64/libdeflate.so
+cmake --install /tmp/libdeflate/build
 rm -rf /tmp/libdeflate
 
-# 9. Build Arrow Lake-S lz4 (dynamically matching system version)
-SYS_LZ4_VER=$(rpm -q --qf "%{VERSION}\n" lz4-libs 2>/dev/null | head -n 1 || true)
-LZ4_BRANCH="v${SYS_LZ4_VER:-1.10.0}"
-git clone --depth 1 --branch "${LZ4_BRANCH}" https://github.com/lz4/lz4.git /tmp/lz4 || \
-git clone --depth 1 --branch v1.10.0 https://github.com/lz4/lz4.git /tmp/lz4
+# 9. Build Arrow Lake-S lz4 (dynamically matching system or latest upstream)
+SYS_LZ4_VER=$(get_rpm_ver lz4-libs)
+clone_dynamic "https://github.com/lz4/lz4.git" "/tmp/lz4" "${SYS_LZ4_VER:+v${SYS_LZ4_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 make -C /tmp/lz4/lib -j"$(nproc)" BUILD_STATIC=no CFLAGS="${CFLAGS} -fPIC"
-LZ4_SO=$(find /tmp/lz4/lib -maxdepth 1 -type f -name "liblz4.so.1.*")
+LZ4_SO=$(find /tmp/lz4/lib -maxdepth 1 -type f -name "liblz4.so.1.*" | head -n 1)
 install -m 755 "${LZ4_SO}" /usr/lib64/
 ln -sf "$(basename "${LZ4_SO}")" /usr/lib64/liblz4.so.1
 rm -rf /tmp/lz4
 
-# 10. Build Arrow Lake-S libjpeg-turbo (dynamically matching system version)
-SYS_JPEG_VER=$(rpm -q --qf "%{VERSION}\n" libjpeg-turbo 2>/dev/null | head -n 1 || true)
-JPEG_BRANCH="${SYS_JPEG_VER:-3.1.3}"
-git clone --depth 1 --branch "${JPEG_BRANCH}" https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo || \
-git clone --depth 1 --branch 3.1.3 https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo || \
-git clone --depth 1 --branch 3.1.0 https://github.com/libjpeg-turbo/libjpeg-turbo.git /tmp/libjpeg-turbo
+# 10. Build Arrow Lake-S libjpeg-turbo (dynamically matching system or latest upstream)
+SYS_JPEG_VER=$(get_rpm_ver libjpeg-turbo)
+clone_dynamic "https://github.com/libjpeg-turbo/libjpeg-turbo.git" "/tmp/libjpeg-turbo" "${SYS_JPEG_VER}" "^[0-9]+\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/libjpeg-turbo/build -S /tmp/libjpeg-turbo -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DENABLE_STATIC=OFF -DWITH_SIMD=ON -DWITH_JPEG8=ON
@@ -113,12 +162,9 @@ cmake --build /tmp/libjpeg-turbo/build
 cmake --install /tmp/libjpeg-turbo/build
 rm -rf /tmp/libjpeg-turbo
 
-# 11. Build Arrow Lake-S SQLite3 (dynamically matching system version)
-SYS_SQLITE_VER=$(rpm -q --qf "%{VERSION}\n" sqlite-libs 2>/dev/null | head -n 1 || true)
-SQLITE_BRANCH="version-${SYS_SQLITE_VER:-3.51.2}"
-git clone --depth 1 --branch "${SQLITE_BRANCH}" https://github.com/sqlite/sqlite.git /tmp/sqlite || \
-git clone --depth 1 --branch version-3.51.2 https://github.com/sqlite/sqlite.git /tmp/sqlite || \
-git clone --depth 1 --branch version-3.48.0 https://github.com/sqlite/sqlite.git /tmp/sqlite
+# 11. Build Arrow Lake-S SQLite3 (dynamically matching system or latest upstream)
+SYS_SQLITE_VER=$(get_rpm_ver sqlite-libs)
+clone_dynamic "https://github.com/sqlite/sqlite.git" "/tmp/sqlite" "${SYS_SQLITE_VER:+version-${SYS_SQLITE_VER}}" "^version-[0-9]+\.[0-9]+\.[0-9]+$"
 cd /tmp/sqlite
 ./configure --prefix=/usr --libdir=/usr/lib64 --disable-static --disable-tcl --soname=legacy \
   CFLAGS="${CFLAGS} -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_COLUMN_METADATA"
@@ -126,57 +172,15 @@ make -j"$(nproc)"
 make install
 cd / && rm -rf /tmp/sqlite
 
-# 12. Build Arrow Lake-S SLEEF SIMD Math Library (libsleef.so.3)
-git clone --depth 1 --branch 3.6.1 https://github.com/shibatch/sleef.git /tmp/sleef
+# 12. Build Arrow Lake-S SLEEF SIMD Math Library (dynamically matching latest upstream)
+SYS_SLEEF_VER=$(get_rpm_ver sleef)
+clone_dynamic "https://github.com/shibatch/sleef.git" "/tmp/sleef" "${SYS_SLEEF_VER}" "^[0-9]+\.[0-9]+(\.[0-9]+)?$"
 cmake -B /tmp/sleef/build -S /tmp/sleef -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DSLEEF_ENABLE_AVX512F=OFF
+  -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DSLEEF_ENABLE_AVX512F=OFF -DSLEEF_BUILD_QUAD=OFF
 cmake --build /tmp/sleef/build
 cmake --install /tmp/sleef/build
 rm -rf /tmp/sleef
-
-# ==============================================================================
-# TODO: Re-enable Custom Arrow Lake-S OpenSSL (libcrypto.so.3 & libssl.so.3)
-#
-# Reason:
-#   Building and swapping system-critical OpenSSL libraries in-place is temporarily
-#   deferred to ensure stability and compatibility across core system utilities
-#   (DNF5, RPM, Curl, systemd). Stock OpenSSL 3.5.x libraries with native hardware
-#   crypto acceleration remain active. See TODO.md for details.
-# ==============================================================================
-# # 13. Build Arrow Lake-S OpenSSL (libcrypto.so.3 & libssl.so.3 with VAES/SHA-NI)
-# OPENSSL_SYS_VER=$(rpm -q --qf "%{VERSION}\n" openssl-libs 2>/dev/null | head -n 1 || true)
-# OPENSSL_BRANCH="openssl-${OPENSSL_SYS_VER:-3.5.9}"
-# git clone --depth 1 --branch "${OPENSSL_BRANCH}" https://github.com/openssl/openssl.git /tmp/openssl || \
-# git clone --depth 1 --branch openssl-3.5.9 https://github.com/openssl/openssl.git /tmp/openssl || \
-# git clone --depth 1 --branch openssl-3.4.1 https://github.com/openssl/openssl.git /tmp/openssl
-# cd /tmp/openssl
-# ./Configure linux-x86_64 --prefix=/usr --libdir=lib64 --openssldir=/etc/pki/tls \
-#   shared enable-ec_nistp_64_gcc_128 no-static-engine no-tests \
-#   "${CFLAGS}"
-# make -j"$(nproc)" build_libs
-#
-# # Detect system shared library targets (e.g. /usr/lib64/libcrypto.so.3.5.9 on Fedora/Bazzite)
-# SYS_CRYPTO_SO=$(readlink -f /usr/lib64/libcrypto.so.3 2>/dev/null || true)
-# SYS_SSL_SO=$(readlink -f /usr/lib64/libssl.so.3 2>/dev/null || true)
-#
-# if [ -n "${SYS_CRYPTO_SO}" ] && [ "$(basename "${SYS_CRYPTO_SO}")" != "libcrypto.so.3" ]; then
-#     install -m 755 /tmp/openssl/libcrypto.so.3 "${SYS_CRYPTO_SO}"
-#     ln -sf "$(basename "${SYS_CRYPTO_SO}")" /usr/lib64/libcrypto.so.3
-# else
-#     install -m 755 /tmp/openssl/libcrypto.so.3 /usr/lib64/libcrypto.so.3
-# fi
-#
-# if [ -n "${SYS_SSL_SO}" ] && [ "$(basename "${SYS_SSL_SO}")" != "libssl.so.3" ]; then
-#     install -m 755 /tmp/openssl/libssl.so.3 "${SYS_SSL_SO}"
-#     ln -sf "$(basename "${SYS_SSL_SO}")" /usr/lib64/libssl.so.3
-# else
-#     install -m 755 /tmp/openssl/libssl.so.3 /usr/lib64/libssl.so.3
-# fi
-#
-# ln -sf libcrypto.so.3 /usr/lib64/libcrypto.so
-# ln -sf libssl.so.3 /usr/lib64/libssl.so
-# cd / && rm -rf /tmp/openssl
 
 # 14. Build Arrow Lake-S AVX2 Fast Memory Primitives (libfastmem.so for memcpy & memset)
 mkdir -p /tmp/fastmem
@@ -228,21 +232,27 @@ gcc -O3 -march=arrowlake-s -mtune=arrowlake-s -fPIC -shared -fno-builtin-memcpy 
   -Wl,-O3 -Wl,-s /tmp/fastmem/fastmem.c -o /usr/lib64/libfastmem.so
 rm -rf /tmp/fastmem
 
-# 15. Build Arrow Lake-S xxHash (libxxhash.so.0)
-SYS_XXHASH_VER=$(rpm -q --qf "%{VERSION}\n" xxhash-libs 2>/dev/null | head -n 1 || true)
-XXHASH_BRANCH="v${SYS_XXHASH_VER:-0.8.4}"
-git clone --depth 1 --branch "${XXHASH_BRANCH}" https://github.com/Cyan4973/xxHash.git /tmp/xxhash || \
-git clone --depth 1 --branch v0.8.4 https://github.com/Cyan4973/xxHash.git /tmp/xxhash || \
-git clone --depth 1 https://github.com/Cyan4973/xxHash.git /tmp/xxhash
+# 15. Build Arrow Lake-S xxHash (dynamically matching system or latest upstream)
+SYS_XXHASH_VER=$(get_rpm_ver xxhash-libs)
+clone_dynamic "https://github.com/Cyan4973/xxHash.git" "/tmp/xxhash" "${SYS_XXHASH_VER:+v${SYS_XXHASH_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 make -C /tmp/xxhash -j"$(nproc)" CFLAGS="${CFLAGS} -fPIC"
 make -C /tmp/xxhash install PREFIX=/usr LIBDIR=/usr/lib64
 rm -rf /tmp/xxhash
 
-# 16. Build Arrow Lake-S Vulkan Loader (libvulkan.so.1)
-SYS_VK_VER=$(rpm -q --qf "%{VERSION}\n" vulkan-loader.x86_64 2>/dev/null | head -n 1 || true)
-VK_TAG="vulkan-sdk-${SYS_VK_VER:-1.4.341.0}"
-git clone --depth 1 --branch "${VK_TAG}" https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader || \
-git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Loader.git /tmp/vulkan-loader
+# 16. Build Arrow Lake-S Vulkan Loader (dynamically matching system or latest upstream SDK tag)
+SYS_VK_VER=$(get_rpm_ver vulkan-loader.x86_64 vulkan-loader)
+# Try both vX.Y.Z and vulkan-sdk-X.Y.Z.0 formats dynamically
+VK_TAG=""
+if [ -n "${SYS_VK_VER}" ]; then
+    if git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/v${SYS_VK_VER}" >/dev/null 2>&1; then
+        VK_TAG="v${SYS_VK_VER}"
+    elif git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/vulkan-sdk-${SYS_VK_VER}" >/dev/null 2>&1; then
+        VK_TAG="vulkan-sdk-${SYS_VK_VER}"
+    elif git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/vulkan-sdk-${SYS_VK_VER}.0" >/dev/null 2>&1; then
+        VK_TAG="vulkan-sdk-${SYS_VK_VER}.0"
+    fi
+fi
+clone_dynamic "https://github.com/KhronosGroup/Vulkan-Loader.git" "/tmp/vulkan-loader" "${VK_TAG}" "^(v|vulkan-sdk-)[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$"
 cmake -B /tmp/vulkan-loader/build -S /tmp/vulkan-loader -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
   -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF
@@ -251,11 +261,8 @@ cmake --install /tmp/vulkan-loader/build
 rm -rf /tmp/vulkan-loader
 
 # 17. Build Arrow Lake-S Sched-Ext Schedulers (scx_bpfland, scx_lavd, scx_rusty)
-SYS_SCX_VER=$(rpm -q --qf "%{VERSION}\n" scx-scheds 2>/dev/null | head -n 1 || true)
-SCX_TAG="v${SYS_SCX_VER:-1.1.4}"
-git clone --depth 1 --branch "${SCX_TAG}" https://github.com/sched-ext/scx.git /tmp/scx || \
-git clone --depth 1 --branch v1.1.4 https://github.com/sched-ext/scx.git /tmp/scx || \
-git clone --depth 1 https://github.com/sched-ext/scx.git /tmp/scx
+SYS_SCX_VER=$(get_rpm_ver scx-scheds scx-scheds-git)
+clone_dynamic "https://github.com/sched-ext/scx.git" "/tmp/scx" "${SYS_SCX_VER:+v${SYS_SCX_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 cargo build --release --manifest-path /tmp/scx/Cargo.toml -p scx_bpfland -p scx_lavd -p scx_rusty
 for sched in scx_bpfland scx_lavd scx_rusty; do
   if [ -f "/tmp/scx/target/release/${sched}" ]; then
@@ -266,17 +273,12 @@ rm -rf /tmp/scx /root/.cargo /tmp/cargo-home
 unset RUSTFLAGS
 
 # 18. Build Arrow Lake-S FreeType (libfreetype.so.6) & HarfBuzz (libharfbuzz.so.0)
-SYS_FREETYPE_VER=$(rpm -q --qf "%{VERSION}\n" freetype 2>/dev/null | head -n 1 || true)
-FREETYPE_TAG="VER-$(echo "${SYS_FREETYPE_VER:-2.14.3}" | tr '.' '-')"
-git clone --depth 1 --branch "${FREETYPE_TAG}" https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype || \
-git clone --depth 1 --branch VER-2-14-3 https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype || \
-git clone --depth 1 https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype
+SYS_FREETYPE_VER=$(get_rpm_ver freetype)
+FREETYPE_TAG="${SYS_FREETYPE_VER:+VER-$(echo "${SYS_FREETYPE_VER}" | tr '.' '-')}"
+clone_dynamic "https://gitlab.freedesktop.org/freetype/freetype.git" "/tmp/freetype" "${FREETYPE_TAG}" "^VER-[0-9]+-[0-9]+-[0-9]+$"
 
-SYS_HARFBUZZ_VER=$(rpm -q --qf "%{VERSION}\n" harfbuzz 2>/dev/null | head -n 1 || true)
-HARFBUZZ_TAG="${SYS_HARFBUZZ_VER:-14.1.0}"
-git clone --depth 1 --branch "${HARFBUZZ_TAG}" https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz || \
-git clone --depth 1 --branch 14.1.0 https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz || \
-git clone --depth 1 https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz
+SYS_HARFBUZZ_VER=$(get_rpm_ver harfbuzz)
+clone_dynamic "https://github.com/harfbuzz/harfbuzz.git" "/tmp/harfbuzz" "${SYS_HARFBUZZ_VER}" "^[0-9]+\.[0-9]+\.[0-9]+$"
 
 # Stage 1: FreeType baseline build without HarfBuzz dependency
 meson setup /tmp/freetype/build /tmp/freetype \
@@ -300,12 +302,8 @@ meson install -C /tmp/freetype/build
 rm -rf /tmp/freetype /tmp/harfbuzz
 
 # 19. Build Arrow Lake-S Gamescope (Valve's Micro-Compositor)
-SYS_GAMESCOPE_VER=$(rpm -q --qf "%{VERSION}\n" terra-gamescope gamescope 2>/dev/null | grep -v "not installed" | head -n 1 || true)
-GAMESCOPE_VER=$(echo "${SYS_GAMESCOPE_VER:-3.16.31}" | sed 's/[\^+].*//')
-GAMESCOPE_TAG="${GAMESCOPE_VER:-3.16.31}"
-git clone --depth 1 --shallow-submodules --recurse-submodules --branch "${GAMESCOPE_TAG}" https://github.com/ValveSoftware/gamescope.git /tmp/gamescope || \
-git clone --depth 1 --shallow-submodules --recurse-submodules --branch 3.16.31 https://github.com/ValveSoftware/gamescope.git /tmp/gamescope || \
-git clone --depth 1 --shallow-submodules --recurse-submodules https://github.com/ValveSoftware/gamescope.git /tmp/gamescope
+SYS_GAMESCOPE_VER=$(get_rpm_ver terra-gamescope gamescope)
+clone_dynamic "https://github.com/ValveSoftware/gamescope.git" "/tmp/gamescope" "${SYS_GAMESCOPE_VER}" "^3\.[0-9]+\.[0-9]+$" --shallow-submodules --recurse-submodules
 
 meson setup /tmp/gamescope/build /tmp/gamescope \
   --prefix=/usr \
@@ -336,18 +334,23 @@ unset CFLAGS CXXFLAGS LDFLAGS
 # 21. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
-# Install oras
 dnf5 install -y oras
 
-# Pull the custom Arrow Lake-S RPMs from your ORAS package (tag: latest-fc44)
+# Dynamically match Fedora release version for the ORAS kernel tag (with fallback to latest-fc44)
+FEDORA_VER=$(rpm -E %fedora)
 mkdir -p /tmp/ogc-rpms
-oras pull ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44 -o /tmp/ogc-rpms
+oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc${FEDORA_VER}" -o /tmp/ogc-rpms || \
+oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44" -o /tmp/ogc-rpms
 ls -la /tmp/ogc-rpms
 
-# Detect base image NVIDIA driver version & target custom kernel version
-SYS_NVIDIA_VER=$(rpm -q --qf "%{VERSION}\n" nvidia-driver 2>/dev/null | head -n 1 || true)
-KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1 || true)
-KVER="${KVER:-7.2.9-ogc3.1.fc44.x86_64}"
+# Dynamically detect base image NVIDIA driver version & target custom kernel version from RPM metadata
+SYS_NVIDIA_VER=$(get_rpm_ver nvidia-driver nvidia-driver-cuda)
+KVER=$(rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" /tmp/ogc-rpms/kernel-core-*.rpm 2>/dev/null | head -n 1)
+
+if [ -z "${KVER}" ]; then
+    echo "::error:: Could not determine kernel version from downloaded kernel-core RPM!"
+    exit 1
+fi
 
 # Prevent any stale conflicting kmod-nvidia-open RPM from ever being installed
 rm -f /tmp/ogc-rpms/kmod-nvidia-open-*.rpm
@@ -423,22 +426,24 @@ dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/li
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
-# 22. Clean up build tools and caches
-dnf5 remove -y cmake meson ninja-build autoconf automake golang-oras oras akmods \
+# 22. Clean up build tools and caches (Keep runtime libraries intact)
+dnf5 remove -y cmake meson ninja-build autoconf automake libtool golang-oras oras akmods \
     clang bpftool libbpf-devel elfutils-libelf-devel rust cargo vulkan-headers \
     brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel \
-    libX11-devel libXdamage-devel libXcomposite-devel libXcursor-devel libXrender-devel \
-    libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel libXres-devel libXmu-devel \
-    libXi-devel libdrm-devel libeis-devel wayland-devel wayland-protocols-devel \
-    libxkbcommon-devel libcap-devel sdl2-compat-devel libavif-devel pixman-devel \
-    systemd-devel libdecor-devel luajit-devel libinput-devel pipewire-devel glslang \
-    spirv-headers-devel glm-devel libseat-devel lcms2-devel xorg-x11-server-Xwayland-devel || true
+    libxcb-devel xcb-util-devel xcb-util-wm-devel xcb-util-image-devel \
+    xcb-util-keysyms-devel xcb-util-renderutil-devel \
+    libX11-devel libXrandr-devel libXdamage-devel libXcomposite-devel libXcursor-devel \
+    libXrender-devel libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel \
+    libXres-devel libXmu-devel libXi-devel libdrm-devel libeis-devel \
+    wayland-devel wayland-protocols-devel libxkbcommon-devel libcap-devel \
+    sdl2-compat-devel libavif-devel pixman-devel systemd-devel libdecor-devel \
+    luajit-devel libinput-devel pipewire-devel glslang \
+    spirv-headers-devel glm-devel libseat-devel lcms2-devel \
+    xorg-x11-server-Xwayland-devel || true
 dnf5 clean all
 ldconfig
 
 # 23. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
-# In OSTree/bootc base images, /opt is initially a symlink to /var/opt (which does not exist).
-# Standard Universal Blue practice: convert /opt to an immutable directory in / so RPMs and binaries install cleanly.
 rm -f /opt && mkdir -p /opt
 
 # 23a. Mullvad VPN (Client, CLI & systemd daemon)
@@ -459,9 +464,20 @@ EOF
 dnf5 install -y code
 dnf5 clean all
 
-# 23c. Google Antigravity GUI program
+# 23c. Google Antigravity GUI program (Dynamic GCS latest build lookup with safe fallback)
 mkdir -p /opt/antigravity
-curl -sSL "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz" | tar -xz -C /opt/antigravity --strip-components=1
+ANTIGRAVITY_FALLBACK_URL="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz"
+ANTIGRAVITY_LATEST_PATH=$(curl -fsSL "https://storage.googleapis.com/storage/v1/b/antigravity-public/o?prefix=antigravity-hub/" 2>/dev/null \
+    | jq -r '.items[]?.name | select(endswith("/linux-x64/Antigravity.tar.gz"))' 2>/dev/null \
+    | sort -V | tail -n 1 || true)
+
+if [ -n "${ANTIGRAVITY_LATEST_PATH}" ]; then
+    ANTIGRAVITY_URL="https://storage.googleapis.com/antigravity-public/${ANTIGRAVITY_LATEST_PATH}"
+else
+    ANTIGRAVITY_URL="${ANTIGRAVITY_FALLBACK_URL}"
+fi
+echo "--> Downloading Antigravity from: ${ANTIGRAVITY_URL}"
+curl -sSL "${ANTIGRAVITY_URL}" | tar -xz -C /opt/antigravity --strip-components=1
 ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
 
 mkdir -p /usr/share/applications
@@ -503,4 +519,3 @@ update-desktop-database /usr/share/applications || true
 systemctl enable scx_loader.service
 systemctl enable mullvad-daemon.service
 systemctl mask NetworkManager-wait-online.service
-
