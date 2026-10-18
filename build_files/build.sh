@@ -235,7 +235,8 @@ SYS_SLEEF_VER=$(get_rpm_ver sleef)
 clone_dynamic "https://github.com/shibatch/sleef.git" "/tmp/sleef" "${SYS_SLEEF_VER}" "^[0-9]+\.[0-9]+(\.[0-9]+)?$"
 cmake -B /tmp/sleef/build -S /tmp/sleef -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DSLEEF_ENABLE_AVX512F=OFF -DSLEEF_BUILD_QUAD=OFF
+  -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DSLEEF_BUILD_TESTS=OFF -DSLEEF_ENABLE_TLFLOAT=OFF \
+  -DSLEEF_DISABLE_AVX512F=ON -DSLEEF_ENABLE_AVX512F=OFF -DSLEEF_BUILD_QUAD=OFF
 cmake --build /tmp/sleef/build
 cmake --install /tmp/sleef/build
 rm -rf /tmp/sleef
@@ -665,7 +666,7 @@ rm -rf /tmp/ogc-rpms
 
 # 22. AVX-512 Safety Verification Gate (Ensure zero illegal zmm instructions in custom libraries)
 echo "--> Running Arrow Lake-S AVX-512 (zmm) instruction sanity check..."
-for lib in /usr/lib64/libfastmem.so /usr/lib64/libjemalloc.so.2 /usr/lib64/libmimalloc.so.2 /usr/lib64/libvulkan.so.1 /usr/lib64/libxxhash.so.0; do
+for lib in /usr/lib64/libfastmem.so /usr/lib64/libjemalloc.so.2 /usr/lib64/libmimalloc.so.2 /usr/lib64/libvulkan.so.1 /usr/lib64/libxxhash.so.0 /usr/lib64/libsleef.so.3; do
     if [ -f "${lib}" ] && objdump -d "${lib}" 2>/dev/null | grep -q '%zmm'; then
         echo "::error:: Illegal AVX-512 (%zmm) register detected in ${lib}!"
         exit 1
