@@ -9,8 +9,17 @@ cp -rv /ctx/system_files/* /
 rm -f /usr/share/ublue-os/image-template-check
 
 # 2. Install temporary compiler toolchain
-dnf5 install -y gcc gcc-c++ make cmake ninja-build autoconf automake git bzip2 zlib-ng-compat-devel \
-    vulkan-headers clang bpftool libbpf-devel elfutils-libelf-devel rust cargo
+dnf5 install -y gcc gcc-c++ make cmake ninja-build meson autoconf automake git bzip2 zlib-ng-compat-devel \
+    vulkan-headers clang bpftool libbpf-devel elfutils-libelf-devel rust cargo \
+    brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel \
+    libX11-devel libXdamage-devel libXcomposite-devel libXcursor-devel libXrender-devel \
+    libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel libXres-devel libXmu-devel \
+    libXi-devel libdrm-devel libeis-devel wayland-devel wayland-protocols-devel \
+    libxkbcommon-devel libcap-devel sdl2-compat-devel libavif-devel pixman-devel \
+    systemd-devel libdecor-devel luajit-devel libinput-devel pipewire-devel hwdata glslang \
+    spirv-headers-devel glm-devel libseat-devel lcms2-devel xorg-x11-server-Xwayland-devel
+
+export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 # 3. Arrow Lake-S optimization flags (Userspace Libraries & Rust)
 export CFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto -fno-plt -pipe -g0"
@@ -256,13 +265,75 @@ done
 rm -rf /tmp/scx /root/.cargo /tmp/cargo-home
 unset RUSTFLAGS
 
+# 18. Build Arrow Lake-S FreeType (libfreetype.so.6) & HarfBuzz (libharfbuzz.so.0)
+SYS_FREETYPE_VER=$(rpm -q --qf "%{VERSION}\n" freetype 2>/dev/null | head -n 1 || true)
+FREETYPE_TAG="VER-$(echo "${SYS_FREETYPE_VER:-2.14.3}" | tr '.' '-')"
+git clone --depth 1 --branch "${FREETYPE_TAG}" https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype || \
+git clone --depth 1 --branch VER-2-14-3 https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype || \
+git clone --depth 1 https://gitlab.freedesktop.org/freetype/freetype.git /tmp/freetype
+
+SYS_HARFBUZZ_VER=$(rpm -q --qf "%{VERSION}\n" harfbuzz 2>/dev/null | head -n 1 || true)
+HARFBUZZ_TAG="${SYS_HARFBUZZ_VER:-14.1.0}"
+git clone --depth 1 --branch "${HARFBUZZ_TAG}" https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz || \
+git clone --depth 1 --branch 14.1.0 https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz || \
+git clone --depth 1 https://github.com/harfbuzz/harfbuzz.git /tmp/harfbuzz
+
+# Stage 1: FreeType baseline build without HarfBuzz dependency
+meson setup /tmp/freetype/build /tmp/freetype \
+  --prefix=/usr --libdir=/usr/lib64 --buildtype=release \
+  -Ddefault_library=shared -Dbrotli=auto -Dbzip2=auto -Dpng=auto -Dzlib=system -Dharfbuzz=disabled -Dtests=disabled
+meson compile -C /tmp/freetype/build
+meson install -C /tmp/freetype/build
+
+# Stage 2: HarfBuzz build compiled against optimized FreeType
+meson setup /tmp/harfbuzz/build /tmp/harfbuzz \
+  --prefix=/usr --libdir=/usr/lib64 --buildtype=release \
+  -Ddefault_library=shared -Dglib=enabled -Dgobject=enabled -Dcairo=auto -Dfreetype=enabled \
+  -Dtests=disabled -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled
+meson compile -C /tmp/harfbuzz/build
+meson install -C /tmp/harfbuzz/build
+
+# Stage 3: Reconfigure & re-link FreeType with HarfBuzz auto-hinting enabled
+meson configure /tmp/freetype/build -Dharfbuzz=enabled
+meson compile -C /tmp/freetype/build
+meson install -C /tmp/freetype/build
+rm -rf /tmp/freetype /tmp/harfbuzz
+
+# 19. Build Arrow Lake-S Gamescope (Valve's Micro-Compositor)
+SYS_GAMESCOPE_VER=$(rpm -q --qf "%{VERSION}\n" terra-gamescope gamescope 2>/dev/null | grep -v "not installed" | head -n 1 || true)
+GAMESCOPE_VER=$(echo "${SYS_GAMESCOPE_VER:-3.16.31}" | sed 's/[\^+].*//')
+GAMESCOPE_TAG="${GAMESCOPE_VER:-3.16.31}"
+git clone --depth 1 --shallow-submodules --recurse-submodules --branch "${GAMESCOPE_TAG}" https://github.com/ValveSoftware/gamescope.git /tmp/gamescope || \
+git clone --depth 1 --shallow-submodules --recurse-submodules --branch 3.16.31 https://github.com/ValveSoftware/gamescope.git /tmp/gamescope || \
+git clone --depth 1 --shallow-submodules --recurse-submodules https://github.com/ValveSoftware/gamescope.git /tmp/gamescope
+
+meson setup /tmp/gamescope/build /tmp/gamescope \
+  --prefix=/usr \
+  --libdir=/usr/lib64 \
+  --buildtype=release \
+  -Davif_screenshots=enabled \
+  -Dbenchmark=disabled \
+  -Ddrm_backend=enabled \
+  -Denable_gamescope=true \
+  -Denable_gamescope_wsi_layer=true \
+  -Denable_openvr_support=false \
+  -Denable_tests=false \
+  -Dinput_emulation=enabled \
+  -Dpipewire=enabled \
+  -Drt_cap=enabled \
+  -Dsdl2_backend=enabled
+meson compile -C /tmp/gamescope/build
+meson install -C /tmp/gamescope/build
+setcap 'CAP_SYS_NICE=eip' /usr/bin/gamescope || true
+rm -rf /tmp/gamescope
+
 # Refresh shared library cache
 ldconfig
 
-# 18. Clear userspace LTO flags
+# 20. Clear userspace LTO flags
 unset CFLAGS CXXFLAGS LDFLAGS
 
-# 18. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
+# 21. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
 # Install oras
@@ -352,23 +423,30 @@ dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/li
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
-# 19. Clean up build tools and caches
-dnf5 remove -y cmake ninja-build autoconf automake golang-oras oras akmods \
-    clang bpftool libbpf-devel rust cargo vulkan-headers || true
+# 22. Clean up build tools and caches
+dnf5 remove -y cmake meson ninja-build autoconf automake golang-oras oras akmods \
+    clang bpftool libbpf-devel elfutils-libelf-devel rust cargo vulkan-headers \
+    brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel \
+    libX11-devel libXdamage-devel libXcomposite-devel libXcursor-devel libXrender-devel \
+    libXext-devel libXfixes-devel libXxf86vm-devel libXtst-devel libXres-devel libXmu-devel \
+    libXi-devel libdrm-devel libeis-devel wayland-devel wayland-protocols-devel \
+    libxkbcommon-devel libcap-devel sdl2-compat-devel libavif-devel pixman-devel \
+    systemd-devel libdecor-devel luajit-devel libinput-devel pipewire-devel glslang \
+    spirv-headers-devel glm-devel libseat-devel lcms2-devel xorg-x11-server-Xwayland-devel || true
 dnf5 clean all
 ldconfig
 
-# 20. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
+# 23. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
 # In OSTree/bootc base images, /opt is initially a symlink to /var/opt (which does not exist).
 # Standard Universal Blue practice: convert /opt to an immutable directory in / so RPMs and binaries install cleanly.
 rm -f /opt && mkdir -p /opt
 
-# 20a. Mullvad VPN (Client, CLI & systemd daemon)
+# 23a. Mullvad VPN (Client, CLI & systemd daemon)
 dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
 dnf5 install -y mullvad-vpn
 dnf5 clean all
 
-# 20b. Visual Studio Code
+# 23b. Visual Studio Code
 rpm --import https://packages.microsoft.com/keys/microsoft.asc
 cat << 'EOF' > /etc/yum.repos.d/vscode.repo
 [code]
@@ -381,7 +459,7 @@ EOF
 dnf5 install -y code
 dnf5 clean all
 
-# 20c. Google Antigravity GUI program
+# 23c. Google Antigravity GUI program
 mkdir -p /opt/antigravity
 curl -sSL "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz" | tar -xz -C /opt/antigravity --strip-components=1
 ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
@@ -421,7 +499,7 @@ EOF
 
 update-desktop-database /usr/share/applications || true
 
-# 21. Enable services
+# 24. Enable services
 systemctl enable scx_loader.service
 systemctl enable mullvad-daemon.service
 systemctl mask NetworkManager-wait-online.service

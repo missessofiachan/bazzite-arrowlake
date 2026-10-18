@@ -29,6 +29,8 @@ Key system allocators, math routines, graphics dispatchers, schedulers, and comp
 - **SQLite3 (dynamic matching):** Natively compiled with memory optimizations and fast table indexing (`-DSQLITE_ENABLE_MEMSYS5`, `-DSQLITE_ENABLE_FTS5`, `-DSQLITE_ENABLE_RTREE`) for Steam, browser, and local game cache operations.
 - **SLEEF 3.6.1:** Hardware-vectorized SIMD math library (`libsleef.so.3`) tuned for AVX2 + FMA for physics, shaders, and gaming audio pipelines.
 - **FastMem Primitives (`libfastmem.so`):** Native AVX2 256-bit vectorized `memcpy` & `memset` preload library tailored for Arrow Lake's high L2 cache bandwidth.
+- **Gamescope (Valve's Micro-Compositor):** Native `-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto` build with bundled WSI layer and `cap_sys_nice=eip` capability. Sits directly in the critical render path for games running under FSR, integer scaling, and HDR tonemapping, slashing compositor latency and maximizing frame-pacing smoothness.
+- **HarfBuzz & FreeType (`libharfbuzz.so.0` & `libfreetype.so.6`):** 3-stage mutual circular native compilation for text shaping and glyph rasterization. Delivers smooth UI transitions and prevents micro-stutters when Steam overlays, browser windows, or in-game HUD fonts are rendered.
 - **Steam & Game Launch Wrappers:** Convenient drop-in CLI launchers (`run-jemalloc %command%`, `run-mimalloc %command%`, `run-fastmem %command%`) to instantly preload Arrow Lake-optimized allocators into Steam games.
 
 ### 3. Tuned Kernel Arguments (`10-arrowlake-gaming.toml`)

@@ -59,3 +59,15 @@ Swapping it in-place during the container build requires careful handling:
 - **xxHash (`libxxhash.so.0`):** Native Arrow Lake-S build with AVX2 & BMI2 acceleration for DXVK pipeline cache lookups, graphics driver state tracking, and Btrfs deduplication (`bees`).
 - **Vulkan Loader (`libvulkan.so.1`):** Native `-O3 -march=arrowlake-s -flto=auto` build to reduce trampoline and function pointer dispatch overhead across millions of draw calls per second.
 - **`scx` Sched-Ext Schedulers (`scx_bpfland`, `scx_lavd`, `scx_rusty`):** Compiled with `RUSTFLAGS="-C target-cpu=arrowlake-s -C opt-level=3"` for tailored hybrid thread scheduling across Lion Cove P-cores (1T) and Skymont E-cores (1T).
+
+---
+
+## 4. Tier 3: Compositor & UI Responsiveness (Gamescope, FreeType, HarfBuzz)
+
+- **Status:** ✅ Integrated & Active
+- **Affects:** `build_files/build.sh` (Sections 18, 19)
+
+### Highlights
+- **Gamescope (Valve's Micro-Compositor):** Native `-O3 -march=arrowlake-s -mtune=arrowlake-s -flto=auto` compilation with full subprojects (`wlroots`, `libliftoff`, `vkroots`, `reshade`, `SPIRV-Headers`), WSI layer (`libVkLayer_FROG_gamescope_wsi_x86_64.so`), and `cap_sys_nice=eip` real-time scheduling permissions. Minimizes compositor latency, improves frame-pacing smoothness, and lowers render queue times.
+- **HarfBuzz (`libharfbuzz.so.0`) & FreeType (`libfreetype.so.6`):** 3-stage circular build (`FreeType base` -> `HarfBuzz with FreeType` -> `FreeType with HarfBuzz auto-hinting`) natively compiled for Arrow Lake-S. Delivers instant UI transitions, zero font-rendering stalls for HUD elements, Steam interface, browser text, and in-game overlays.
+
