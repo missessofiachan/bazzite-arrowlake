@@ -5,8 +5,26 @@ export HOME=/tmp
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # ==============================================================================
-# Dynamic Version & Tag Resolution Helpers
+# Dynamic Version, Tag Resolution & Network Retry Helpers
 # ==============================================================================
+# 0. Retry wrapper for transient network / GitLab / GitHub / registry failures
+retry_cmd() {
+    local retries=3
+    local count=1
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if [ "${count}" -ge "${retries}" ]; then
+            echo "::warning:: Command failed after ${retries} attempts: $*" >&2
+            return 1
+        fi
+        echo "--> Retry ${count}/${retries} in $((count * 3))s for: $*" >&2
+        sleep $((count * 3))
+        count=$((count + 1))
+    done
+}
+
 # 1. Query installed RPM version cleanly (strips epochs and release suffixes)
 get_rpm_ver() {
     rpm -q --qf "%{VERSION}\n" "$@" 2>/dev/null | grep -v "not installed" | head -n 1 | sed 's/[\^+~].*//' || true
@@ -16,40 +34,62 @@ get_rpm_ver() {
 get_latest_tag() {
     local repo_url="$1"
     local tag_regex="${2:-^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)*$}"
-    git ls-remote --tags --refs --sort=-v:refname "${repo_url}" 2>/dev/null \
+    retry_cmd git ls-remote --tags --refs --sort=-v:refname "${repo_url}" 2>/dev/null \
         | awk -F'refs/tags/' '{print $2}' \
         | grep -E "${tag_regex}" \
         | head -n 1 || true
 }
 
-# 3. Clone a repo trying: (1) RPM-matched tag, (2) Latest upstream release tag, (3) Default branch
+# 3. Clone a repo trying: (1) Latest upstream release tag, (2) System RPM-matched tag, (3) Default branch
 clone_dynamic() {
     local repo_url="$1"
     local dest_dir="$2"
-    local preferred_tag="$3"
-    local fallback_regex="${4:-^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)*$}"
+    local fallback_rpm_tag="$3"
+    local tag_regex="${4:-^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)*$}"
     shift 4
     local extra_git_args=("$@")
+    local want_submodules=0
+    local clone_args=()
 
-    rm -rf "${dest_dir}"
-    if [ -n "${preferred_tag}" ]; then
-        echo "--> Attempting clone of ${repo_url} at system-matched tag: ${preferred_tag}"
-        if git clone --depth 1 "${extra_git_args[@]}" --branch "${preferred_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
-            return 0
+    for arg in "${extra_git_args[@]}"; do
+        if [ "${arg}" = "--recurse-submodules" ] || [ "${arg}" = "--shallow-submodules" ]; then
+            want_submodules=1
+        else
+            clone_args+=("${arg}")
         fi
-    fi
+    done
 
     local latest_tag
-    latest_tag=$(get_latest_tag "${repo_url}" "${fallback_regex}")
+    latest_tag=$(get_latest_tag "${repo_url}" "${tag_regex}")
+
+    local cloned=0
     if [ -n "${latest_tag}" ]; then
         echo "--> Attempting clone of ${repo_url} at latest upstream tag: ${latest_tag}"
-        if git clone --depth 1 "${extra_git_args[@]}" --branch "${latest_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
-            return 0
+        rm -rf "${dest_dir}"
+        if retry_cmd git clone --depth 1 "${clone_args[@]}" --branch "${latest_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
+            cloned=1
         fi
     fi
 
-    echo "--> Falling back to default HEAD branch for ${repo_url}"
-    git clone --depth 1 "${extra_git_args[@]}" "${repo_url}" "${dest_dir}"
+    if [ "${cloned}" -eq 0 ] && [ -n "${fallback_rpm_tag}" ] && [ "${fallback_rpm_tag}" != "${latest_tag}" ]; then
+        echo "--> Attempting clone of ${repo_url} at system-matched fallback tag: ${fallback_rpm_tag}"
+        rm -rf "${dest_dir}"
+        if retry_cmd git clone --depth 1 "${clone_args[@]}" --branch "${fallback_rpm_tag}" "${repo_url}" "${dest_dir}" 2>/dev/null; then
+            cloned=1
+        fi
+    fi
+
+    if [ "${cloned}" -eq 0 ]; then
+        echo "--> Falling back to default HEAD branch for ${repo_url}"
+        rm -rf "${dest_dir}"
+        retry_cmd git clone --depth 1 "${clone_args[@]}" "${repo_url}" "${dest_dir}"
+    fi
+
+    if [ "${want_submodules}" -eq 1 ]; then
+        echo "--> Initializing submodules for ${dest_dir}..."
+        retry_cmd git -C "${dest_dir}" submodule update --init --recursive --depth 1 || \
+        retry_cmd git -C "${dest_dir}" submodule update --init --recursive
+    fi
 }
 
 # 1. Copy baked-in system configs
@@ -72,7 +112,7 @@ BUILD_DEPS=(
     luajit-devel libinput-devel pipewire-devel hwdata glslang
     spirv-headers-devel glm-devel libseat-devel lcms2-devel
 )
-dnf5 install -y --setopt=disable_excludes=* "${BUILD_DEPS[@]}"
+retry_cmd dnf5 install -y --setopt=disable_excludes=* "${BUILD_DEPS[@]}"
 
 # Provide xwayland.pc for wlroots/gamescope when terra-xorg-x11-server-Xwayland is installed
 # (Fedora's xorg-x11-server-Xwayland-devel conflicts with Terra's newer Xwayland package)
@@ -200,7 +240,7 @@ SYS_JPEG_VER=$(get_rpm_ver libjpeg-turbo)
 clone_dynamic "https://github.com/libjpeg-turbo/libjpeg-turbo.git" "/tmp/libjpeg-turbo" "${SYS_JPEG_VER}" "^[0-9]+\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/libjpeg-turbo/build -S /tmp/libjpeg-turbo -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DENABLE_STATIC=OFF -DWITH_SIMD=ON -DWITH_JPEG8=ON
+  -DENABLE_STATIC=OFF -DWITH_SIMD=ON -DWITH_JPEG8=OFF
 cmake --build /tmp/libjpeg-turbo/build
 cmake --install /tmp/libjpeg-turbo/build
 rm -rf /tmp/libjpeg-turbo
@@ -473,25 +513,21 @@ make -C /tmp/xxhash -j"$(nproc)" CFLAGS="${CFLAGS} -fPIC"
 make -C /tmp/xxhash install PREFIX=/usr LIBDIR=/usr/lib64
 rm -rf /tmp/xxhash
 
-# 16. Build Arrow Lake-S Vulkan Loader (dynamically matching system or latest upstream SDK tag)
+# 16. Build Arrow Lake-S Vulkan Loader (synchronized with matching latest upstream Vulkan-Headers)
 SYS_VK_VER=$(get_rpm_ver vulkan-loader.x86_64 vulkan-loader)
-VK_TAG=""
-if [ -n "${SYS_VK_VER}" ]; then
-    if git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/v${SYS_VK_VER}" >/dev/null 2>&1; then
-        VK_TAG="v${SYS_VK_VER}"
-    elif git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/vulkan-sdk-${SYS_VK_VER}" >/dev/null 2>&1; then
-        VK_TAG="vulkan-sdk-${SYS_VK_VER}"
-    elif git ls-remote --exit-code --tags https://github.com/KhronosGroup/Vulkan-Loader.git "refs/tags/vulkan-sdk-${SYS_VK_VER}.0" >/dev/null 2>&1; then
-        VK_TAG="vulkan-sdk-${SYS_VK_VER}.0"
-    fi
-fi
-clone_dynamic "https://github.com/KhronosGroup/Vulkan-Loader.git" "/tmp/vulkan-loader" "${VK_TAG}" "^(v|vulkan-sdk-)[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$"
+clone_dynamic "https://github.com/KhronosGroup/Vulkan-Headers.git" "/tmp/vulkan-headers" "${SYS_VK_VER:+v${SYS_VK_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
+cmake -B /tmp/vulkan-headers/build -S /tmp/vulkan-headers -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/vk-headers
+cmake --build /tmp/vulkan-headers/build
+cmake --install /tmp/vulkan-headers/build
+
+clone_dynamic "https://github.com/KhronosGroup/Vulkan-Loader.git" "/tmp/vulkan-loader" "${SYS_VK_VER:+v${SYS_VK_VER}}" "^v[0-9]+\.[0-9]+\.[0-9]+$"
 cmake -B /tmp/vulkan-loader/build -S /tmp/vulkan-loader -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 \
-  -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF
+  -DCMAKE_PREFIX_PATH=/tmp/vk-headers -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF
 cmake --build /tmp/vulkan-loader/build
 cmake --install /tmp/vulkan-loader/build
-rm -rf /tmp/vulkan-loader
+rm -rf /tmp/vulkan-headers /tmp/vk-headers /tmp/vulkan-loader
 
 # 17. Build Arrow Lake-S Sched-Ext Schedulers (scx_bpfland, scx_lavd, scx_rusty)
 SYS_SCX_VER=$(get_rpm_ver scx-scheds scx-scheds-git)
@@ -529,7 +565,7 @@ meson install -C /tmp/freetype/build
 # Stage 2: HarfBuzz build compiled against optimized FreeType
 meson setup /tmp/harfbuzz/build /tmp/harfbuzz \
   --prefix=/usr --libdir=/usr/lib64 --buildtype=release \
-  -Ddefault_library=shared -Dglib=enabled -Dgobject=enabled -Dcairo=auto -Dfreetype=enabled \
+  -Ddefault_library=shared -Dglib=enabled -Dgobject=enabled -Dicu=enabled -Dcairo=auto -Dfreetype=enabled \
   -Dtests=disabled -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled
 meson compile -C /tmp/harfbuzz/build
 meson install -C /tmp/harfbuzz/build
@@ -564,6 +600,22 @@ meson install -C /tmp/gamescope/build
 setcap 'CAP_SYS_NICE=eip' /usr/bin/gamescope || true
 rm -rf /tmp/gamescope
 
+# Snapshot all custom-built Arrow Lake-S libraries & binaries so subsequent dnf5 operations cannot clobber them
+mkdir -p /tmp/arrowlake-stage/lib64 /tmp/arrowlake-stage/bin
+cp -a /usr/lib64/libjemalloc.so* /usr/lib64/libmimalloc.so* /usr/lib64/libfastmem.so \
+      /usr/lib64/libz.so* /usr/lib64/libzstd.so* /usr/lib64/libdeflate.so* \
+      /usr/lib64/liblz4.so* /usr/lib64/libjpeg.so* /usr/lib64/libturbojpeg.so* \
+      /usr/lib64/libpng*.so* /usr/lib64/libbrotli*.so* /usr/lib64/libsqlite3.so* \
+      /usr/lib64/libsleef*.so* /usr/lib64/libxxhash.so* /usr/lib64/libvulkan.so* \
+      /usr/lib64/libfreetype.so* /usr/lib64/libharfbuzz*.so* \
+      /usr/lib64/libVkLayer_FROG_gamescope_wsi_*.so \
+      /tmp/arrowlake-stage/lib64/ 2>/dev/null || true
+cp -a /usr/bin/zstd* /usr/bin/lz4* /usr/bin/xxh* /usr/bin/sqlite3 \
+      /usr/bin/scx_bpfland /usr/bin/scx_lavd /usr/bin/scx_rusty \
+      /usr/bin/gamescope* /usr/bin/run-jemalloc /usr/bin/run-mimalloc \
+      /usr/bin/run-fastmem /usr/bin/run-pcores \
+      /tmp/arrowlake-stage/bin/ 2>/dev/null || true
+
 # Refresh shared library cache
 ldconfig
 
@@ -573,13 +625,13 @@ unset CFLAGS CXXFLAGS LDFLAGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNC
 # 21. Install Custom Arrow Lake-S Kernel & Matching NVIDIA Driver (with Self-Healing Contract)
 export KCFLAGS="-O3 -march=arrowlake-s -mtune=arrowlake-s -pipe -Wno-error"
 
-dnf5 install -y oras
+retry_cmd dnf5 install -y oras
 
 # Dynamically match Fedora release version for the ORAS kernel tag (with fallback to latest-fc44)
 FEDORA_VER=$(rpm -E %fedora)
 mkdir -p /tmp/ogc-rpms
-oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc${FEDORA_VER}" -o /tmp/ogc-rpms || \
-oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44" -o /tmp/ogc-rpms
+retry_cmd oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc${FEDORA_VER}" -o /tmp/ogc-rpms || \
+retry_cmd oras pull "ghcr.io/missessofiachan/kernel-packagesarrowlake-fedora:latest-fc44" -o /tmp/ogc-rpms
 ls -la /tmp/ogc-rpms
 
 # Dynamically detect base image NVIDIA driver version & target custom kernel version from RPM metadata
@@ -627,7 +679,7 @@ repo_gpgcheck=0
 skip_if_unavailable=1
 priority=70
 EOF
-    dnf5 install -y --enablerepo=fedora-nvidia akmod-nvidia akmods
+    retry_cmd dnf5 install -y --enablerepo=fedora-nvidia akmod-nvidia akmods
     akmods --force --kernels "${KVER}" --kmod nvidia
     find /var/cache/akmods/ -name "kmod-nvidia-*.rpm" -exec rpm -Uvh --oldpackage --replacepkgs --replacefiles --noscripts --nodeps {} \;
 fi
@@ -671,18 +723,8 @@ dracut --no-hostonly --kver "${KVER}" --reproducible -v --add ostree -f "/usr/li
 chmod 0600 "/usr/lib/modules/${KVER}/initramfs.img"
 rm -rf /tmp/ogc-rpms
 
-# 22. AVX-512 Safety Verification Gate (Ensure zero illegal zmm instructions in custom libraries)
-echo "--> Running Arrow Lake-S AVX-512 (zmm) instruction sanity check..."
-for lib in /usr/lib64/libfastmem.so /usr/lib64/libjemalloc.so.2 /usr/lib64/libmimalloc.so.2 /usr/lib64/libvulkan.so.1 /usr/lib64/libxxhash.so.0 /usr/lib64/libsleef.so.3; do
-    if [ -f "${lib}" ] && objdump -d "${lib}" 2>/dev/null | grep -q '%zmm'; then
-        echo "::error:: Illegal AVX-512 (%zmm) register detected in ${lib}!"
-        exit 1
-    fi
-done
-echo "--> AVX-512 safety check passed: 0 illegal %zmm instructions found."
-
-# 23. Clean up build tools and caches (Keep runtime libraries intact)
-dnf5 remove -y cmake meson ninja-build autoconf automake libtool ccache golang-oras oras akmods \
+# 22. Clean up build tools and caches (Keep runtime libraries intact with --noautoremove)
+dnf5 remove -y --noautoremove cmake meson ninja-build autoconf automake libtool ccache golang-oras oras akmods \
     clang bpftool libbpf-devel elfutils-libelf-devel rust cargo vulkan-headers \
     brotli-devel bzip2-devel libpng-devel glib2-devel libicu-devel \
     libxcb-devel xcb-util-devel xcb-util-wm-devel xcb-util-image-devel \
@@ -696,18 +738,17 @@ dnf5 remove -y cmake meson ninja-build autoconf automake libtool ccache golang-o
     spirv-headers-devel glm-devel libseat-devel lcms2-devel || true
 rm -f /usr/share/pkgconfig/xwayland.pc
 dnf5 clean all
-ldconfig
 
-# 24. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
+# 23. Install Mullvad VPN, Visual Studio Code & Google Antigravity GUI
 rm -f /opt && mkdir -p /opt
 
-# 24a. Mullvad VPN (Client, CLI & systemd daemon)
-dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
-dnf5 install -y mullvad-vpn
+# 23a. Mullvad VPN (Client, CLI & systemd daemon)
+retry_cmd dnf5 config-manager addrepo --from-repofile=https://repository.mullvad.net/rpm/stable/mullvad.repo
+retry_cmd dnf5 install -y mullvad-vpn
 dnf5 clean all
 
-# 24b. Visual Studio Code
-rpm --import https://packages.microsoft.com/keys/microsoft.asc
+# 23b. Visual Studio Code
+retry_cmd rpm --import https://packages.microsoft.com/keys/microsoft.asc
 cat << 'EOF' > /etc/yum.repos.d/vscode.repo
 [code]
 name=Visual Studio Code
@@ -716,10 +757,10 @@ enabled=1
 gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
-dnf5 install -y code
+retry_cmd dnf5 install -y code
 dnf5 clean all
 
-# 24c. Google Antigravity GUI program (Dynamic GCS latest build lookup with safe fallback)
+# 23c. Google Antigravity GUI program (Dynamic GCS latest build lookup with safe fallback)
 mkdir -p /opt/antigravity
 ANTIGRAVITY_FALLBACK_URL="https://storage.googleapis.com/antigravity-public/antigravity-hub/2.23.0-5238607586394112/linux-x64/Antigravity.tar.gz"
 ANTIGRAVITY_LATEST_PATH=$(curl -fsSL "https://storage.googleapis.com/storage/v1/b/antigravity-public/o?prefix=antigravity-hub/" 2>/dev/null \
@@ -732,7 +773,7 @@ else
     ANTIGRAVITY_URL="${ANTIGRAVITY_FALLBACK_URL}"
 fi
 echo "--> Downloading Antigravity from: ${ANTIGRAVITY_URL}"
-curl -sSL "${ANTIGRAVITY_URL}" | tar -xz -C /opt/antigravity --strip-components=1
+retry_cmd bash -c "curl -fsSL '${ANTIGRAVITY_URL}' | tar -xz -C /opt/antigravity --strip-components=1"
 ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
 
 mkdir -p /usr/share/applications
@@ -770,7 +811,57 @@ EOF
 
 update-desktop-database /usr/share/applications || true
 
-# 25. Enable services & Print Build Telemetry Summary
+# 24. Restore staged custom Arrow Lake-S libraries & binaries (preventing any dnf5 overwrite)
+cp -af /tmp/arrowlake-stage/lib64/* /usr/lib64/
+cp -af /tmp/arrowlake-stage/bin/* /usr/bin/
+setcap 'CAP_SYS_NICE=eip' /usr/bin/gamescope || true
+rm -rf /tmp/arrowlake-stage
+ldconfig
+
+# 25. Final AVX-512 Safety & Dynamic Linkage Verification Gates
+echo "--> Running Arrow Lake-S AVX-512 (zmm) instruction sanity check..."
+AVX512_CHECK_TARGETS=(
+    /usr/lib64/libfastmem.so
+    /usr/lib64/libjemalloc.so.2
+    /usr/lib64/libmimalloc.so.2
+    /usr/lib64/libz.so.1
+    /usr/lib64/libzstd.so.1
+    /usr/lib64/liblz4.so.1
+    /usr/lib64/libjpeg.so.62
+    /usr/lib64/libpng16.so.16
+    /usr/lib64/libbrotlicommon.so.1
+    /usr/lib64/libbrotlidec.so.1
+    /usr/lib64/libbrotlienc.so.1
+    /usr/lib64/libsqlite3.so.0
+    /usr/lib64/libsleef.so.3
+    /usr/lib64/libxxhash.so.0
+    /usr/lib64/libvulkan.so.1
+    /usr/lib64/libfreetype.so.6
+    /usr/lib64/libharfbuzz.so.0
+    /usr/bin/gamescope
+    /usr/bin/scx_bpfland
+    /usr/bin/scx_lavd
+    /usr/bin/scx_rusty
+)
+for target in "${AVX512_CHECK_TARGETS[@]}"; do
+    if [ -f "${target}" ] && objdump -d "${target}" 2>/dev/null | grep -q '%zmm'; then
+        echo "::error:: Illegal AVX-512 (%zmm) register detected in ${target}!"
+        exit 1
+    fi
+done
+echo "--> AVX-512 safety check passed: 0 illegal %zmm instructions found across ${#AVX512_CHECK_TARGETS[@]} targets."
+
+echo "--> Running Dynamic Shared Library Linkage (ldd) verification gate..."
+for bin in /usr/bin/gamescope /usr/bin/scx_bpfland /usr/bin/scx_lavd /usr/bin/scx_rusty /usr/bin/zstd /usr/bin/lz4 /usr/bin/rpm-ostree; do
+    if [ -x "${bin}" ] && ldd "${bin}" 2>/dev/null | grep -q "not found"; then
+        echo "::error:: Missing shared library dependency detected in ${bin}:"
+        ldd "${bin}" | grep "not found"
+        exit 1
+    fi
+done
+echo "--> Dynamic linkage check passed: all runtime shared libraries resolved cleanly."
+
+# 26. Enable services & Print Build Telemetry Summary
 systemctl enable scx_loader.service
 systemctl enable mullvad-daemon.service
 systemctl mask NetworkManager-wait-online.service
